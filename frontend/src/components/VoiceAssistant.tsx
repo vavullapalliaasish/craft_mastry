@@ -1,6 +1,7 @@
 import React, {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -20,9 +21,7 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 
-import {
-  Ionicons,
-} from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 
 import {
   PALETTE,
@@ -44,6 +43,10 @@ import {
   useLanguage,
 } from '../i18n/LanguageContext';
 
+import {
+  VOICE_GUIDES,
+  VoiceGuideScreen,
+} from '../voice/VoiceGuideConfig';
 
 type Role =
   | 'ARTISAN'
@@ -51,26 +54,17 @@ type Role =
   | 'ADMIN'
   | 'GUEST';
 
-
 interface Props {
   role?: Role;
+  screen?: string;
 }
-
 
 export const VoiceAssistant: React.FC<Props> = ({
   role = 'GUEST',
+  screen = 'Unknown',
 }) => {
+  const { lang } = useLanguage();
 
-  const { lang } =
-    useLanguage();
-
-  /*
-   * Native Expo recorder.
-   *
-   * No WebSocket.
-   * No Deepgram live stream.
-   * No PCM streaming.
-   */
   const recorder =
     useAudioRecorder(
       RecordingPresets.HIGH_QUALITY
@@ -96,12 +90,24 @@ export const VoiceAssistant: React.FC<Props> = ({
   const [error, setError] =
     useState('');
 
+  const [guideText, setGuideText] =
+    useState('');
+
+  const [guideLoading, setGuideLoading] =
+    useState(false);
+
+  const [guideEnabled, setGuideEnabled] =
+    useState(true);
+
+  const lastGuidedScreen =
+    useRef<string | null>(null);
+
+  const mounted =
+    useRef(true);
 
   const roleLabel =
     useMemo(() => {
-
       switch (role) {
-
         case 'ARTISAN':
           return 'artisan';
 
@@ -114,34 +120,172 @@ export const VoiceAssistant: React.FC<Props> = ({
         default:
           return 'guest';
       }
-
     }, [role]);
-
 
   const isRecording =
     Boolean(
       recorderState.isRecording
     );
 
+  const normalizedScreen =
+    (
+      screen || 'Unknown'
+    ) as VoiceGuideScreen;
 
+  const guide =
+    VOICE_GUIDES[
+      normalizedScreen
+    ] ||
+    VOICE_GUIDES.Unknown;
+
+  /*
+   * Cleanup
+   */
   useEffect(() => {
+    mounted.current = true;
 
     return () => {
+      mounted.current = false;
+
       SpeechAdapter
         .stop()
         .catch(() => {});
     };
-
   }, []);
 
+  /*
+   * AUTOMATIC PAGE GUIDE
+   *
+   * Runs only when the page changes.
+   */
+  useEffect(() => {
+    if (!guideEnabled) {
+      return;
+    }
+
+    if (!screen) {
+      return;
+    }
+
+    if (
+      lastGuidedScreen.current === screen
+    ) {
+      return;
+    }
+
+    lastGuidedScreen.current =
+      screen;
+
+    let cancelled = false;
+
+    const guideCurrentPage =
+      async () => {
+        try {
+          setGuideLoading(true);
+          setError('');
+
+          /*
+           * Ask Gemini to convert the
+           * page instruction into the
+           * user's selected language.
+           */
+          const response =
+            await ApiAdapter.askVoiceAssistant(
+              `
+You are the voice guide inside Craft Mastery.
+
+The user is currently on:
+${guide.title}
+
+The user role is:
+${roleLabel}
+
+The selected language is:
+${lang}
+
+Give the user ONE short, friendly instruction explaining:
+1. what this page is for
+2. what they should do next
+
+Important:
+- Speak in the user's selected language.
+- Do not use English unless the selected language is English.
+- Do not give multiple unrelated instructions.
+- Do not mention AI, Gemini, APIs, backend, or technical details.
+- Keep it easy for a person with low digital literacy.
+- Maximum 2 short sentences.
+
+Page instruction:
+${guide.instruction}
+              `.trim(),
+              lang,
+              roleLabel,
+              screen
+            );
+
+          if (
+            cancelled ||
+            !mounted.current
+          ) {
+            return;
+          }
+
+          const text =
+            response.answer?.trim();
+
+          if (!text) {
+            return;
+          }
+
+          setGuideText(text);
+
+          /*
+           * Speak automatically.
+           */
+          await SpeechAdapter.speak(
+            text,
+            lang as any
+          );
+        } catch (error: any) {
+          console.warn(
+            '[VoiceGuide] Automatic guide error:',
+            error
+          );
+        } finally {
+          if (
+            !cancelled &&
+            mounted.current
+          ) {
+            setGuideLoading(false);
+          }
+        }
+      };
+
+    guideCurrentPage();
+
+    return () => {
+      cancelled = true;
+
+      SpeechAdapter
+        .stop()
+        .catch(() => {});
+    };
+  }, [
+    screen,
+    lang,
+    roleLabel,
+    guideEnabled,
+  ]);
 
   /*
    * START RECORDING
    */
   const startRecording =
     async () => {
-
-      if (busy || isRecording) {
+      if (
+        busy ||
+        isRecording
+      ) {
         return;
       }
 
@@ -151,33 +295,26 @@ export const VoiceAssistant: React.FC<Props> = ({
       setMessage('');
 
       try {
-
         const permission =
           await AudioModule
             .requestRecordingPermissionsAsync();
 
         if (!permission.granted) {
-
           throw new Error(
             'Microphone permission is required for the voice assistant.'
           );
         }
-
 
         await setAudioModeAsync({
           playsInSilentMode: true,
           allowsRecording: true,
         });
 
-
         await recorder
           .prepareToRecordAsync();
 
-
         recorder.record();
-
       } catch (err: any) {
-
         console.error(
           '[VoiceAssistant] Start error:',
           err
@@ -185,25 +322,20 @@ export const VoiceAssistant: React.FC<Props> = ({
 
         setError(
           err?.message ||
-          'Could not start voice recording.'
+            'Could not start voice recording.'
         );
       }
     };
 
-
   /*
    * STOP RECORDING
-   * ↓
-   * Sarvam STT
-   * ↓
-   * Gemini
-   * ↓
-   * TTS
    */
   const stopRecording =
     async () => {
-
-      if (!isRecording || busy) {
+      if (
+        !isRecording ||
+        busy
+      ) {
         return;
       }
 
@@ -211,92 +343,75 @@ export const VoiceAssistant: React.FC<Props> = ({
       setError('');
 
       try {
-
         await recorder.stop();
-
 
         const audioUri =
           recorder.uri;
 
-
         if (!audioUri) {
-
           throw new Error(
             'The recorded audio file was not created.'
           );
         }
 
-
         /*
          * Speech-to-text
          */
         const transcription =
-          await ApiAdapter
-            .transcribeAudio(
-              audioUri,
-              lang
-            );
-
+          await ApiAdapter.transcribeAudio(
+            audioUri,
+            lang
+          );
 
         const transcript =
           transcription.transcript
             ?.trim();
 
-
         if (!transcript) {
-
           throw new Error(
             'I could not hear any speech. Please try again.'
           );
         }
 
-
         setMessage(
           transcript
         );
 
-
         /*
-         * Gemini assistant
+         * Gemini
+         *
+         * IMPORTANT:
+         * Now we send the actual
+         * current screen instead of
+         * "global app".
          */
         const response =
-          await ApiAdapter
-            .askVoiceAssistant(
-              transcript,
-              lang,
-              roleLabel,
-              'global app'
-            );
-
+          await ApiAdapter.askVoiceAssistant(
+            transcript,
+            lang,
+            roleLabel,
+            screen
+          );
 
         const assistantText =
           response.answer
             ?.trim();
 
-
         if (!assistantText) {
-
           throw new Error(
             'The assistant returned an empty response.'
           );
         }
 
-
         setAnswer(
           assistantText
         );
 
-
-        /*
-         * Text-to-speech
-         */
         await SpeechAdapter.speak(
           assistantText,
           lang as any
         );
-
       } catch (err: any) {
-
         console.error(
           '[VoiceAssistant] Voice processing error:',
           err
@@ -304,44 +419,62 @@ export const VoiceAssistant: React.FC<Props> = ({
 
         setError(
           err?.message ||
-          'Voice assistant could not process your request.'
+            'Voice assistant could not process your request.'
         );
-
       } finally {
-
         setBusy(false);
       }
     };
 
-
   const toggleRecording =
     async () => {
-
       if (busy) {
         return;
       }
 
       if (isRecording) {
-
         await stopRecording();
-
       } else {
-
         await startRecording();
-
       }
     };
 
-
-  const closePanel =
+  /*
+   * Repeat current page guide
+   */
+  const repeatGuide =
     async () => {
+      if (
+        !guideText ||
+        busy
+      ) {
+        return;
+      }
 
       try {
+        await SpeechAdapter.stop();
 
+        await SpeechAdapter.speak(
+          guideText,
+          lang as any
+        );
+      } catch (error) {
+        console.warn(
+          '[VoiceGuide] Repeat error:',
+          error
+        );
+      }
+    };
+
+  /*
+   * Close panel
+   */
+  const closePanel =
+    async () => {
+      try {
         if (isRecording) {
           await recorder.stop();
         }
-
       } catch {}
 
       await SpeechAdapter
@@ -353,22 +486,40 @@ export const VoiceAssistant: React.FC<Props> = ({
       setError('');
     };
 
+  /*
+   * Toggle automatic guidance
+   */
+  const toggleGuide =
+    async () => {
+      const next =
+        !guideEnabled;
+
+      setGuideEnabled(next);
+
+      if (!next) {
+        await SpeechAdapter
+          .stop()
+          .catch(() => {});
+      }
+    };
 
   return (
-
     <View
       pointerEvents="box-none"
       style={styles.overlay}
     >
-
       {panelOpen && (
-
         <View style={styles.panel}>
-
-          <View style={styles.panelHeader}>
-
-            <View style={styles.brandMark}>
-
+          <View
+            style={
+              styles.panelHeader
+            }
+          >
+            <View
+              style={
+                styles.brandMark
+              }
+            >
               <Ionicons
                 name="sparkles"
                 size={16}
@@ -376,35 +527,29 @@ export const VoiceAssistant: React.FC<Props> = ({
                   PALETTE.textInverse
                 }
               />
-
             </View>
-
 
             <View
               style={
                 styles.panelHeaderText
               }
             >
-
               <Text
                 style={
                   styles.panelTitle
                 }
               >
-                Craft Mastery Assistant
+                Craft Mastery Guide
               </Text>
-
 
               <Text
                 style={
                   styles.panelSubtitle
                 }
               >
-                Voice help · {roleLabel}
+                {guide.title} · {roleLabel}
               </Text>
-
             </View>
-
 
             <Pressable
               onPress={
@@ -414,7 +559,6 @@ export const VoiceAssistant: React.FC<Props> = ({
                 styles.closeButton
               }
             >
-
               <Ionicons
                 name="close"
                 size={20}
@@ -422,64 +566,27 @@ export const VoiceAssistant: React.FC<Props> = ({
                   PALETTE.textMuted
                 }
               />
-
             </Pressable>
-
           </View>
 
-
-          {message ? (
-
+          {guideText ? (
             <View
               style={
-                styles.messageBubble
+                styles.guideBubble
               }
             >
-
-              <Text
-                style={
-                  styles.messageLabel
-                }
-              >
-                You said
-              </Text>
-
-
-              <Text
-                style={
-                  styles.messageText
-                }
-              >
-                {message}
-              </Text>
-
-            </View>
-
-          ) : null}
-
-
-          {answer ? (
-
-            <View
-              style={
-                styles.answerBubble
-              }
-            >
-
               <View
                 style={
                   styles.answerHeader
                 }
               >
-
                 <Text
                   style={
                     styles.answerLabel
                   }
                 >
-                  Assistant
+                  PAGE GUIDE
                 </Text>
-
 
                 <Ionicons
                   name="volume-high-outline"
@@ -488,9 +595,94 @@ export const VoiceAssistant: React.FC<Props> = ({
                     PALETTE.primary
                   }
                 />
-
               </View>
 
+              <Text
+                style={
+                  styles.answerText
+                }
+              >
+                {guideText}
+              </Text>
+
+              <Pressable
+                onPress={
+                  repeatGuide
+                }
+                style={
+                  styles.repeatButton
+                }
+              >
+                <Ionicons
+                  name="refresh"
+                  size={17}
+                  color={
+                    PALETTE.primary
+                  }
+                />
+
+                <Text
+                  style={
+                    styles.repeatText
+                  }
+                >
+                  Repeat
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {message ? (
+            <View
+              style={
+                styles.messageBubble
+              }
+            >
+              <Text
+                style={
+                  styles.messageLabel
+                }
+              >
+                You said
+              </Text>
+
+              <Text
+                style={
+                  styles.messageText
+                }
+              >
+                {message}
+              </Text>
+            </View>
+          ) : null}
+
+          {answer ? (
+            <View
+              style={
+                styles.answerBubble
+              }
+            >
+              <View
+                style={
+                  styles.answerHeader
+                }
+              >
+                <Text
+                  style={
+                    styles.answerLabel
+                  }
+                >
+                  Assistant
+                </Text>
+
+                <Ionicons
+                  name="volume-high-outline"
+                  size={16}
+                  color={
+                    PALETTE.primary
+                  }
+                />
+              </View>
 
               <Text
                 style={
@@ -499,14 +691,10 @@ export const VoiceAssistant: React.FC<Props> = ({
               >
                 {answer}
               </Text>
-
             </View>
-
           ) : null}
 
-
           {error ? (
-
             <Text
               style={
                 styles.errorText
@@ -514,30 +702,26 @@ export const VoiceAssistant: React.FC<Props> = ({
             >
               {error}
             </Text>
-
           ) : null}
-
 
           <View
             style={
               styles.panelFooter
             }
           >
-
             <Text
               style={
                 styles.hint
               }
             >
-
-              {busy
-                ? 'Processing your voice…'
-                : isRecording
-                  ? 'Tap the microphone when you finish'
-                  : 'Ask anything about Craft Mastery'}
-
+              {guideLoading
+                ? 'Preparing your page guide…'
+                : busy
+                  ? 'Processing your voice…'
+                  : isRecording
+                    ? 'Tap the microphone when you finish'
+                    : 'Ask me for help'}
             </Text>
-
 
             <Pressable
               onPress={
@@ -546,25 +730,19 @@ export const VoiceAssistant: React.FC<Props> = ({
               disabled={busy}
               style={[
                 styles.micButton,
-
                 isRecording &&
                   styles.micButtonListening,
-
                 busy &&
                   styles.micButtonBusy,
               ]}
             >
-
               {busy ? (
-
                 <ActivityIndicator
                   color={
                     PALETTE.textInverse
                   }
                 />
-
               ) : (
-
                 <Ionicons
                   name={
                     isRecording
@@ -576,17 +754,47 @@ export const VoiceAssistant: React.FC<Props> = ({
                     PALETTE.textInverse
                   }
                 />
-
               )}
-
             </Pressable>
-
           </View>
 
+          <Pressable
+            onPress={
+              toggleGuide
+            }
+            style={
+              styles.guideToggle
+            }
+          >
+            <Ionicons
+              name={
+                guideEnabled
+                  ? 'volume-high'
+                  : 'volume-mute'
+              }
+              size={18}
+              color={
+                guideEnabled
+                  ? PALETTE.primary
+                  : PALETTE.textMuted
+              }
+            />
+
+            <Text
+              style={[
+                styles.guideToggleText,
+                !guideEnabled &&
+                  styles.guideDisabled,
+              ]}
+            >
+              Automatic page guidance{' '}
+              {guideEnabled
+                ? 'ON'
+                : 'OFF'}
+            </Text>
+          </Pressable>
         </View>
-
       )}
-
 
       <Pressable
         onPress={() =>
@@ -600,7 +808,6 @@ export const VoiceAssistant: React.FC<Props> = ({
             styles.fabOpen,
         ]}
       >
-
         <Ionicons
           name={
             panelOpen
@@ -618,17 +825,13 @@ export const VoiceAssistant: React.FC<Props> = ({
             styles.fabDot
           }
         />
-
       </Pressable>
-
     </View>
   );
 };
 
-
 const styles =
   StyleSheet.create({
-
     overlay: {
       ...StyleSheet.absoluteFill,
       zIndex: 9999,
@@ -660,8 +863,7 @@ const styles =
       top: 9,
       width: 8,
       height: 8,
-      borderRadius:
-        RADIUS.full,
+      borderRadius: RADIUS.full,
       backgroundColor:
         PALETTE.aiAccent,
       borderWidth: 2,
@@ -727,6 +929,17 @@ const styles =
       justifyContent: 'center',
     },
 
+    guideBubble: {
+      marginTop: SPACING.md,
+      padding: SPACING.md,
+      borderRadius: RADIUS.md,
+      backgroundColor:
+        PALETTE.primaryMuted,
+      borderWidth: 1,
+      borderColor:
+        PALETTE.primary + '30',
+    },
+
     messageBubble: {
       marginTop: SPACING.md,
       padding: SPACING.md,
@@ -740,8 +953,7 @@ const styles =
         PALETTE.textMuted,
       fontSize: 10,
       fontWeight: '700',
-      textTransform:
-        'uppercase',
+      textTransform: 'uppercase',
     },
 
     messageText: {
@@ -765,8 +977,7 @@ const styles =
 
     answerHeader: {
       flexDirection: 'row',
-      justifyContent:
-        'space-between',
+      justifyContent: 'space-between',
       alignItems: 'center',
     },
 
@@ -775,8 +986,7 @@ const styles =
         PALETTE.primary,
       fontSize: 10,
       fontWeight: '800',
-      textTransform:
-        'uppercase',
+      textTransform: 'uppercase',
     },
 
     answerText: {
@@ -785,6 +995,26 @@ const styles =
       fontSize: 14,
       lineHeight: 21,
       marginTop: 5,
+    },
+
+    repeatButton: {
+      marginTop: SPACING.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      minHeight: 42,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.md,
+      backgroundColor:
+        PALETTE.surface,
+    },
+
+    repeatText: {
+      marginLeft: 6,
+      color:
+        PALETTE.primary,
+      fontWeight: '700',
+      fontSize: 12,
     },
 
     errorText: {
@@ -828,5 +1058,25 @@ const styles =
 
     micButtonBusy: {
       opacity: 0.75,
+    },
+
+    guideToggle: {
+      marginTop: SPACING.sm,
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+
+    guideToggleText: {
+      marginLeft: 8,
+      color:
+        PALETTE.primary,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+
+    guideDisabled: {
+      color:
+        PALETTE.textMuted,
     },
   });

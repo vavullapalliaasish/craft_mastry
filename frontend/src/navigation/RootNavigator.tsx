@@ -1,10 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, {
+  useEffect,
+  useState,
+} from 'react';
+
 import {
   View,
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+
+import {
+  NavigationContainer,
+} from '@react-navigation/native';
 
 import { AuthStackNavigator } from './AuthStackNavigator';
 import { ArtisanTabNavigator } from './ArtisanTabNavigator';
@@ -19,12 +26,33 @@ import { PALETTE } from '../theme/tokens';
 import { VoiceAssistant } from '../components/VoiceAssistant';
 
 export const RootNavigator: React.FC = () => {
+  /*
+   * Current authenticated user
+   */
   const [currentUser, setCurrentUser] =
     useState<AuthUser | null>(null);
 
+  /*
+   * Initial loading state
+   */
   const [isLoading, setIsLoading] =
     useState<boolean>(true);
 
+  /*
+   * Current screen used by VoiceAssistant
+   *
+   * This starts with WelcomeLanguage
+   * because that is the first authentication
+   * screen in your application.
+   */
+  const [currentScreen, setCurrentScreen] =
+    useState<string>(
+      'WelcomeLanguage'
+    );
+
+  /*
+   * Load existing authentication session
+   */
   useEffect(() => {
     const loadSession = async () => {
       try {
@@ -45,12 +73,18 @@ export const RootNavigator: React.FC = () => {
     loadSession();
   }, []);
 
+  /*
+   * Called after successful login/register
+   */
   const handleAuthenticated = (
     user: AuthUser
   ) => {
     setCurrentUser(user);
   };
 
+  /*
+   * Logout
+   */
   const handleLogout = async () => {
     try {
       await AuthAdapter.signOut();
@@ -62,12 +96,27 @@ export const RootNavigator: React.FC = () => {
     }
 
     setCurrentUser(null);
+
+    /*
+     * Reset voice guide to the
+     * first authentication screen.
+     */
+    setCurrentScreen(
+      'WelcomeLanguage'
+    );
   };
 
+  /*
+   * Switch between Artisan and Customer
+   */
   const handleSwitchRole = (
-    newRole: 'ARTISAN' | 'CUSTOMER'
+    newRole:
+      | 'ARTISAN'
+      | 'CUSTOMER'
   ) => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      return;
+    }
 
     setCurrentUser({
       ...currentUser,
@@ -75,17 +124,30 @@ export const RootNavigator: React.FC = () => {
     });
   };
 
+  /*
+   * Initial loading screen
+   */
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View
+        style={
+          styles.loadingContainer
+        }
+      >
         <ActivityIndicator
           size="large"
-          color={PALETTE.primary}
+          color={
+            PALETTE.primary
+          }
         />
       </View>
     );
   }
 
+  /*
+   * Convert the user's role into
+   * the role expected by VoiceAssistant.
+   */
   const voiceRole =
     currentUser?.role === 'ARTISAN'
       ? 'ARTISAN'
@@ -93,110 +155,249 @@ export const RootNavigator: React.FC = () => {
         ? 'CUSTOMER'
         : 'GUEST';
 
-  return (
-    <View style={styles.root}>
+  /*
+   * Get the deepest active route.
+   *
+   * Your project has nested navigation:
+   *
+   * Root
+   * ├── AuthStack
+   * │   └── Auth Screen
+   *
+   * ├── ArtisanTabs
+   * │   └── Artisan Screen
+   *
+   * └── CustomerTabs
+   *     └── Customer Screen
+   *
+   * This function walks through the nested
+   * navigation state until it finds the
+   * actual visible screen.
+   */
+  const getDeepestRouteName = (
+    state: any
+  ): string | null => {
+    try {
+      if (!state) {
+        return null;
+      }
 
+      let route =
+        state.routes?.[
+          state.index
+        ];
+
+      while (
+        route?.state
+      ) {
+        const nestedState =
+          route.state;
+
+        route =
+          nestedState.routes?.[
+            nestedState.index
+          ];
+      }
+
+      if (
+        route &&
+        typeof route.name === 'string'
+      ) {
+        return route.name;
+      }
+
+      return null;
+    } catch (error) {
+      console.warn(
+        '[VoiceGuide] Could not determine current route:',
+        error
+      );
+
+      return null;
+    }
+  };
+
+  /*
+   * Detect navigation changes.
+   *
+   * This is the main connection between
+   * React Navigation and VoiceAssistant.
+   */
+  const handleNavigationStateChange = (
+    state: any
+  ) => {
+    const routeName =
+      getDeepestRouteName(
+        state
+      );
+
+    if (!routeName) {
+      return;
+    }
+
+    console.log(
+      '[VoiceGuide] Current screen:',
+      routeName
+    );
+
+    setCurrentScreen(
+      routeName
+    );
+  };
+
+  return (
+    <View
+      style={
+        styles.root
+      }
+    >
       <NavigationContainer
+        /*
+         * IMPORTANT:
+         *
+         * We intentionally do NOT use
+         * useNavigationContainerRef here.
+         *
+         * This avoids the TypeScript
+         * "Property 'name' does not exist
+         * on type 'never'" errors.
+         */
+
+        onStateChange={
+          handleNavigationStateChange
+        }
+
         theme={{
           dark: false,
 
           colors: {
-            primary: PALETTE.primary,
-            background: PALETTE.background,
-            card: PALETTE.surface,
-            text: PALETTE.textPrimary,
-            border: PALETTE.surfaceBorder,
-            notification: PALETTE.primaryLight,
+            primary:
+              PALETTE.primary,
+
+            background:
+              PALETTE.background,
+
+            card:
+              PALETTE.surface,
+
+            text:
+              PALETTE.textPrimary,
+
+            border:
+              PALETTE.surfaceBorder,
+
+            notification:
+              PALETTE.primaryLight,
           },
 
           fonts: {
             regular: {
-              fontFamily: 'System',
-              fontWeight: '400',
+              fontFamily:
+                'System',
+              fontWeight:
+                '400',
             },
 
             medium: {
-              fontFamily: 'System',
-              fontWeight: '500',
+              fontFamily:
+                'System',
+              fontWeight:
+                '500',
             },
 
             bold: {
-              fontFamily: 'System',
-              fontWeight: '700',
+              fontFamily:
+                'System',
+              fontWeight:
+                '700',
             },
 
             heavy: {
-              fontFamily: 'System',
-              fontWeight: '900',
+              fontFamily:
+                'System',
+              fontWeight:
+                '900',
             },
           },
         }}
       >
-
         {!currentUser ? (
-
+          /*
+           * Authentication flow
+           */
           <AuthStackNavigator
             onAuthenticated={
               handleAuthenticated
             }
-            initialRouteName="WelcomeLanguage"
+            initialRouteName={
+              'WelcomeLanguage'
+            }
           />
-
-        ) : currentUser.role === 'ARTISAN' ? (
-
+        ) : currentUser.role ===
+          'ARTISAN' ? (
+          /*
+           * Artisan application
+           */
           <ArtisanTabNavigator
-            onLogout={handleLogout}
-            onSwitchRole={handleSwitchRole}
+            onLogout={
+              handleLogout
+            }
+            onSwitchRole={
+              handleSwitchRole
+            }
           />
-
         ) : (
-
+          /*
+           * Customer application
+           */
           <CustomerTabNavigator
-            onLogout={handleLogout}
-            onSwitchRole={handleSwitchRole}
+            onLogout={
+              handleLogout
+            }
+            onSwitchRole={
+              handleSwitchRole
+            }
           />
-
         )}
-
       </NavigationContainer>
 
       {/*
-        IMPORTANT:
-
-        VoiceAssistant is outside NavigationContainer.
-
-        Therefore it remains available on:
-        - Language selection
-        - Login
-        - Register
-        - Onboarding
-        - Artisan dashboard
-        - Catalog
-        - Upload
-        - Messages
-        - Account
-        - Buyer screens
-      */}
-
+       * GLOBAL VOICE ASSISTANT
+       *
+       * The assistant stays outside
+       * NavigationContainer so it remains
+       * available throughout the application.
+       *
+       * screen={currentScreen} tells the
+       * assistant which page the user
+       * is currently viewing.
+       */}
       <VoiceAssistant
         role={voiceRole}
+        screen={
+          currentScreen
+        }
       />
-
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-  },
+const styles =
+  StyleSheet.create({
+    root: {
+      flex: 1,
+    },
 
-  loadingContainer: {
-    flex: 1,
-    backgroundColor:
-      PALETTE.background,
+    loadingContainer: {
+      flex: 1,
 
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+      backgroundColor:
+        PALETTE.background,
+
+      alignItems:
+        'center',
+
+      justifyContent:
+        'center',
+    },
+  });
