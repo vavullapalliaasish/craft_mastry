@@ -658,123 +658,134 @@ export const ApiAdapter = {
    *
    * Backend then sends the audio to Sarvam AI.
    */
+    // ---------------------------------
+  // Speech To Text - Groq Whisper
+  // ---------------------------------
+
+  // ---------------------------------
+  // Speech To Text - Groq Whisper
+  // ---------------------------------
+
   async transcribeAudio(
     audioUri: string,
-    language: string
+    language: string,
   ): Promise<{
     transcript: string;
     language?: string;
     provider?: string;
   }> {
-
     try {
-
       if (!audioUri) {
         throw new Error(
-          'No audio file was provided.'
+          'No audio recording was created.',
         );
       }
 
       console.log(
-        '[Speech] Recording URI:',
-        audioUri
+        '[Groq Speech] Audio URI:',
+        audioUri,
       );
 
-      /**
-       * Expo SDK 57 FileSystem File API.
-       *
-       * IMPORTANT:
-       * File is imported from expo-file-system.
-       *
-       * Expo File is already Blob-compatible,
-       * so we do NOT use file.blob().
-       */
-      const file =
-        new File(audioUri);
+      const formData = new FormData();
 
       /**
-       * Check that the file exists.
+       * WEB
+       *
+       * expo-audio uses MediaRecorder on Web.
+       * The returned URI is a blob: URL.
+       *
+       * DO NOT use:
+       *
+       * new File(audioUri)
+       *
+       * on Web.
        */
-      if (!file.exists) {
-        throw new Error(
-          'The recorded audio file does not exist.'
+      if (
+        Platform.OS === 'web'
+      ) {
+        console.log(
+          '[Groq Speech] Web recording detected',
+        );
+
+        const audioResponse =
+          await fetch(audioUri);
+
+        if (!audioResponse.ok) {
+          throw new Error(
+            `Could not read recorded audio (${audioResponse.status})`,
+          );
+        }
+
+        const audioBlob =
+          await audioResponse.blob();
+
+        if (
+          !audioBlob ||
+          audioBlob.size <= 0
+        ) {
+          throw new Error(
+            'The recorded audio is empty.',
+          );
+        }
+
+        console.log(
+          '[Groq Speech] Web audio size:',
+          audioBlob.size,
+        );
+
+        console.log(
+          '[Groq Speech] Web audio type:',
+          audioBlob.type,
+        );
+
+        formData.append(
+          'audio',
+          audioBlob,
+          'voice-note.webm',
+        );
+      } else {
+        /**
+         * ANDROID / IOS
+         *
+         * Native Expo File API.
+         */
+        const file =
+          new File(audioUri);
+
+        if (!file.exists) {
+          throw new Error(
+            'The recorded audio file does not exist.',
+          );
+        }
+
+        if (
+          !file.size ||
+          file.size <= 0
+        ) {
+          throw new Error(
+            'The recorded audio file is empty.',
+          );
+        }
+
+        console.log(
+          '[Groq Speech] Native audio size:',
+          file.size,
+        );
+
+        formData.append(
+          'audio',
+          file as any,
+          file.name ||
+            'voice-note.m4a',
         );
       }
 
       /**
-       * Check file size.
-       *
-       * Expo File is Blob-compatible,
-       * so size is available directly.
-       */
-      if (!file.size) {
-        throw new Error(
-          'The recorded audio file is empty.'
-        );
-      }
-
-      console.log(
-        '[Speech] Audio size:',
-        file.size
-      );
-
-      /**
-       * Determine MIME type.
-       */
-      const lowerUri =
-        audioUri.toLowerCase();
-
-      const mimeType =
-        file.type ||
-        (
-          lowerUri.endsWith('.m4a')
-            ? 'audio/mp4'
-            : lowerUri.endsWith('.wav')
-              ? 'audio/wav'
-              : lowerUri.endsWith('.mp3')
-                ? 'audio/mpeg'
-                : lowerUri.endsWith('.webm')
-                  ? 'audio/webm'
-                  : 'audio/mp4'
-        );
-
-      console.log(
-        '[Speech] Audio MIME type:',
-        mimeType
-      );
-
-      /**
-       * FormData
-       */
-      const formData =
-        new FormData();
-
-      /**
-       * Audio field expected by backend.
-       *
-       * Expo File is already a Blob,
-       * therefore it can be appended directly.
-       */
-      formData.append(
-        'audio',
-        file,
-        file.name || 'voice-note.m4a'
-      );
-
-      /**
-       * Language selected by user.
-       *
-       * Examples:
-       *
-       * te
-       * te-IN
-       * Telugu
-       * hi
-       * en
+       * Language selected by artisan.
        */
       formData.append(
         'language',
-        language || 'en'
+        language || 'en',
       );
 
       /**
@@ -784,36 +795,35 @@ export const ApiAdapter = {
         await getAuthToken();
 
       /**
-       * Global voice assistant works
-       * before and after login.
+       * Authenticated users use:
+       *
+       * /api/speech-to-text
+       *
+       * Guests use:
+       *
+       * /api/public/speech-to-text
        */
       const endpoint =
-        `${API_BASE_URL}/${
-          token
-            ? 'speech-to-text'
-            : 'public/speech-to-text'
-        }`;
+        token
+          ? `${API_BASE_URL}/speech-to-text`
+          : `${API_BASE_URL}/public/speech-to-text`;
 
       console.log(
-        '[Speech] Sending audio to:',
-        endpoint
+        '[Groq Speech] Sending audio to:',
+        endpoint,
       );
 
       /**
        * IMPORTANT:
        *
-       * Do NOT manually add
-       * Content-Type: multipart/form-data.
-       *
-       * The runtime must generate the
-       * multipart boundary automatically.
+       * Do NOT set Content-Type manually.
+       * FormData creates the multipart boundary.
        */
       const response =
         await expoFetch(
           endpoint,
           {
-            method:
-              'POST',
+            method: 'POST',
 
             headers: {
               Accept:
@@ -827,55 +837,49 @@ export const ApiAdapter = {
                 : {}),
             },
 
-            body:
-              formData,
-          }
+            body: formData,
+          },
         );
 
       const responseText =
         await response.text();
 
-      let data: any;
+      console.log(
+        '[Groq Speech] HTTP status:',
+        response.status,
+      );
+
+      console.log(
+        '[Groq Speech] Server response:',
+        responseText,
+      );
+
+      let data: any = {};
 
       try {
         data =
           responseText
             ? JSON.parse(
-                responseText
+                responseText,
               )
             : {};
-
       } catch {
         data = {
           error:
             responseText ||
-            'Unknown server response',
+            'Invalid server response',
         };
       }
 
-      console.log(
-        '[Speech] Server status:',
-        response.status
-      );
-
-      console.log(
-        '[Speech] Server response:',
-        data
-      );
-
       /**
-       * Handle server error.
+       * Backend error.
        */
       if (!response.ok) {
-
-        const errorMessage =
-          data?.message ||
-          data?.error ||
-          data?.details ||
-          `Speech-to-text failed with HTTP ${response.status}`;
-
         throw new Error(
-          errorMessage
+          data?.error ||
+          data?.message ||
+          data?.details ||
+          `Speech transcription failed (${response.status})`,
         );
       }
 
@@ -884,34 +888,37 @@ export const ApiAdapter = {
        */
       const transcript =
         typeof data?.transcript ===
-          'string'
+        'string'
           ? data.transcript.trim()
           : '';
 
       if (!transcript) {
-        console.warn(
-          '[Speech] Server returned an empty transcript.'
+        throw new Error(
+          'No speech was detected. Please speak clearly and try again.',
         );
       }
+
+      console.log(
+        '[Groq Speech] Transcript:',
+        transcript,
+      );
 
       return {
         transcript,
 
         language:
           data?.language ||
-          data?.language_code ||
-          language,
+          language ||
+          'en',
 
         provider:
           data?.provider ||
-          'sarvam',
+          'groq-whisper',
       };
-
     } catch (error: any) {
-
       console.error(
-        '[Speech] Error:',
-        error
+        '[Groq Speech] Transcription error:',
+        error,
       );
 
       throw error instanceof Error
@@ -919,8 +926,8 @@ export const ApiAdapter = {
         : new Error(
             String(
               error ||
-              'Speech transcription failed'
-            )
+              'Speech transcription failed',
+            ),
           );
     }
   },

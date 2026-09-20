@@ -10,8 +10,9 @@ import {
 } from 'react-native';
 import {
   AudioModule,
+  RecordingPresets,
   setAudioModeAsync,
-  useAudioStream,
+  useAudioRecorder,
 } from 'expo-audio';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -160,10 +161,6 @@ export const UploadScreen: React.FC = () => {
 
   const [selectedImage, setSelectedImage] = useState<PickedImageResult | null>(null);
 
-  const socketRef = useRef<WebSocket | null>(null);
-  const isRecordingRef = useRef(false);
-  const finalTranscriptRef = useRef('');
-  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [enhancedImageUri, setEnhancedImageUri] = useState('');
   const [enhancementProvider, setEnhancementProvider] = useState('');
@@ -174,53 +171,24 @@ export const UploadScreen: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeakingDescription, setIsSpeakingDescription] = useState(false);
 
-  const liveSpeechUrl = useMemo(() => {
-    const explicit = process.env.EXPO_PUBLIC_LIVE_SPEECH_URL?.trim();
-    if (explicit) return explicit;
-
-    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
-    if (apiBase) {
-      const normalized = apiBase.replace(/\/$/, '');
-      return normalized.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:') + '/live-speech';
-    }
-
-    if (typeof window !== 'undefined' && window.location?.origin) {
-      const origin = window.location.origin.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
-      return origin + '/live-speech';
-    }
-
-    return 'ws://localhost:3000/live-speech';
-  }, []);
-
-  const audioStream = useAudioStream({
-    sampleRate: 16000,
-    channels: 1,
-    encoding: 'int16',
-    onBuffer: ({ data }) => {
-      const socket = socketRef.current;
-      if (!isRecordingRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
-      try {
-        socket.send(data);
-      } catch (error) {
-        console.warn('[Upload voice] Could not send audio buffer:', error);
-      }
-    },
-  });
+  // Recorded-audio transcription:
+  // Expo records the voice locally, then SpeechAdapter uploads the
+  // completed audio file to /api/speech-to-text, where the backend
+  // sends it to Groq Whisper.
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const isRecordingRef = useRef(false);
 
   useEffect(() => {
     return () => {
-      if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
       isRecordingRef.current = false;
       try {
-        socketRef.current?.send(JSON.stringify({ type: 'close' }));
-      } catch {}
-      try {
-        socketRef.current?.close();
-      } catch {}
-      socketRef.current = null;
+        audioRecorder.stop();
+      } catch {
+        // Recorder may already be stopped/unavailable during unmount.
+      }
       SpeechAdapter.stop().catch(() => {});
     };
-  }, []);
+  }, [audioRecorder]);
 
   const handleSelectImage = async (result: PickedImageResult) => {
     if (!result.uri) return;
@@ -290,33 +258,27 @@ export const UploadScreen: React.FC = () => {
   };
 
   const handleVoiceInput = async () => {
+    // STOP + TRANSCRIBE
     if (isRecordingRef.current) {
-      // Stop capture first. Deepgram receives a Finalize message below.
       isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(true);
 
       try {
-        audioStream.stream.stop();
+        await audioRecorder.stop();
 
-        const socket = socketRef.current;
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'finalize' }));
+        const audioUri = audioRecorder.uri;
 
-          // Give Deepgram a moment to return the final transcript.
-          await new Promise<void>((resolve) => {
-            stopTimerRef.current = setTimeout(resolve, 900);
-          });
-
-          try {
-            socket.send(JSON.stringify({ type: 'close' }));
-          } catch {}
-          socket.close();
+        if (!audioUri) {
+          throw new Error('No recorded audio was created. Please try again.');
         }
 
-        socketRef.current = null;
+        console.log('[Upload voice] Recorded audio:', audioUri);
 
-        const transcript = finalTranscriptRef.current.trim();
+        const result = await ApiAdapter.transcribeAudio(audioUri, lang);
+
+        const transcript = result?.transcript?.trim();
+
         if (!transcript) {
           Alert.alert(
             'No speech detected',
@@ -327,24 +289,22 @@ export const UploadScreen: React.FC = () => {
 
         setVoiceNote(transcript);
       } catch (err: any) {
-        console.error('[Upload voice] stop error:', err);
+        console.error('[Upload voice] transcription error:', err);
         Alert.alert(
           'Voice input failed',
-          err?.message || 'Could not stop or transcribe your voice.',
+          err?.message || 'Could not transcribe your voice. Please try again.',
         );
       } finally {
-        if (stopTimerRef.current) {
-          clearTimeout(stopTimerRef.current);
-          stopTimerRef.current = null;
-        }
         setIsProcessing(false);
       }
 
       return;
     }
 
+    // START RECORDING
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
+
       if (!permission.granted) {
         Alert.alert(
           'Microphone permission',
@@ -358,116 +318,30 @@ export const UploadScreen: React.FC = () => {
         allowsRecording: true,
       });
 
-      finalTranscriptRef.current = '';
       setVoiceNote('');
-      setIsProcessing(true);
+      setExtractionResult(null);
+      setIsProcessing(false);
 
-      const socket = new WebSocket(liveSpeechUrl);
-      socket.binaryType = 'arraybuffer';
-      socketRef.current = socket;
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
 
-      socket.onopen = async () => {
-        try {
-          socket.send(
-            JSON.stringify({
-              type: 'config',
-              language: lang,
-              sampleRate: 16000,
-              channels: 1,
-            }),
-          );
-        } catch (error: any) {
-          console.error('[Upload voice] WebSocket config error:', error);
-          setIsProcessing(false);
-          isRecordingRef.current = false;
-          setIsRecording(false);
-          Alert.alert('Voice input failed', 'Could not configure live transcription.');
-        }
-      };
+      isRecordingRef.current = true;
+      setIsRecording(true);
 
-      socket.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-
-          if (message.type === 'ready') {
-            isRecordingRef.current = true;
-            setIsRecording(true);
-            setIsProcessing(false);
-            audioStream.stream.start().catch((error) => {
-              console.error('[Upload voice] Audio stream start failed:', error);
-              isRecordingRef.current = false;
-              setIsRecording(false);
-              setIsProcessing(false);
-              Alert.alert(
-                'Voice input failed',
-                error?.message || 'Could not start microphone streaming.',
-              );
-              try {
-                socket.close();
-              } catch {}
-            });
-            return;
-          }
-
-          if (message.type === 'transcript') {
-            const transcript = String(message.transcript || '').trim();
-            if (!transcript) return;
-
-            if (message.isFinal) {
-              finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim();
-              setVoiceNote(finalTranscriptRef.current);
-            } else {
-              const preview = `${finalTranscriptRef.current} ${transcript}`.trim();
-              setVoiceNote(preview);
-            }
-            return;
-          }
-
-          if (message.type === 'error') {
-            console.error('[Upload voice] Deepgram error:', message.error, message.details);
-            isRecordingRef.current = false;
-            setIsRecording(false);
-            setIsProcessing(false);
-            Alert.alert(
-              'Voice input failed',
-              message.error || 'Live transcription failed.',
-            );
-            try {
-              socket.close();
-            } catch {}
-          }
-        } catch (error) {
-          console.warn('[Upload voice] Invalid WebSocket message:', error);
-        }
-      };
-
-      socket.onerror = (event) => {
-        console.error('[Upload voice] WebSocket error:', event);
-        isRecordingRef.current = false;
-        setIsRecording(false);
-        setIsProcessing(false);
-        Alert.alert(
-          'Voice input failed',
-          'Could not connect to the live speech service. Check that the backend is running and the phone is on the same Wi-Fi.',
-        );
-      };
-
-      socket.onclose = () => {
-        if (socketRef.current === socket) {
-          socketRef.current = null;
-        }
-      };
+      console.log('[Upload voice] Recording started');
     } catch (err: any) {
-      console.error('[Upload voice] start error:', err);
+      console.error('[Upload voice] start recording error:', err);
       isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(false);
+
       Alert.alert(
         'Voice input failed',
-        err?.message || 'Could not start live voice input.',
+        err?.message || 'Could not start microphone recording.',
       );
     }
   };
+
   const currentIndex = useMemo(() => {
     if (!selectedImage) return 0;
     if (isEnhancing) return 1;

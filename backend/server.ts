@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { DeepgramClient } from '@deepgram/sdk';
+import Groq, { toFile } from 'groq-sdk';
 import { INITIAL_PRODUCTS, INITIAL_INQUIRIES } from './src/data/mockData.ts';
 import { provisionRole, requireAuth, requireRole, samePhone } from './serverAuth.ts';
 
@@ -53,6 +54,40 @@ const PHOTOROOM_REMOVE_BACKGROUND_URL = 'https://sdk.photoroom.com/v1/segment';
 const deepgram = DEEPGRAM_API_KEY
   ? new DeepgramClient({ apiKey: DEEPGRAM_API_KEY })
   : null;
+
+// Groq Whisper is used for recorded/uploaded speech-to-text.
+// Deepgram remains in place for the existing live WebSocket speech feature.
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
+
+/**
+ * Convert the app language code to the ISO-639-1 code expected by Groq Whisper.
+ */
+const GROQ_LANGUAGE_CODES: Record<string, string> = {
+  te: 'te', telugu: 'te',
+  hi: 'hi', hindi: 'hi',
+  en: 'en', english: 'en',
+  ta: 'ta', tamil: 'ta',
+  kn: 'kn', kannada: 'kn',
+  mr: 'mr', marathi: 'mr',
+  bn: 'bn', bengali: 'bn',
+  ml: 'ml', malayalam: 'ml',
+  gu: 'gu', gujarati: 'gu',
+  pa: 'pa', punjabi: 'pa',
+  ur: 'ur', urdu: 'ur',
+  as: 'as', assamese: 'as',
+  ne: 'ne', nepali: 'ne',
+  or: 'or', odia: 'or',
+};
+
+function resolveGroqLanguageCode(requested: unknown): string | null {
+  if (typeof requested !== 'string' || !requested.trim()) return 'en';
+  const normalized = requested.trim().toLowerCase();
+  if (normalized === 'unknown') return null;
+  return GROQ_LANGUAGE_CODES[normalized]
+    || GROQ_LANGUAGE_CODES[normalized.split('-')[0]]
+    || null;
+}
 
 /**
  * Convert the short language codes used by the frontend into
@@ -882,11 +917,11 @@ const publicVoiceRateLimit = rateLimit('public-voice', 8);
  */
 async function handleSpeechToText(req: express.Request, res: express.Response) {
   try {
-    if (!deepgram) {
+    if (!groq) {
       return clientError(
         res,
         500,
-        'Speech-to-text is not configured on the server (missing DEEPGRAM_API_KEY)',
+        'Speech-to-text is not configured on the server (missing GROQ_API_KEY)',
       );
     }
 
@@ -902,46 +937,42 @@ async function handleSpeechToText(req: express.Request, res: express.Response) {
     }
 
     const requestedLanguage = req.body?.language;
-    const languageCode = resolveDeepgramLanguageCode(requestedLanguage);
+    const languageCode = resolveGroqLanguageCode(requestedLanguage);
 
     if (!languageCode) {
       return clientError(
         res,
         400,
-        'The selected language is not supported by Deepgram Nova-3 speech-to-text',
+        'The selected language is not supported by Groq Whisper speech-to-text',
       );
     }
 
     console.log(
-      `[Deepgram] Transcribing ${file.originalname || 'audio'} ` +
+      `[Groq] Transcribing ${file.originalname || 'audio'} ` +
       `(${file.mimetype || 'unknown'}) using language=${languageCode}`,
     );
 
-    const result = await deepgram.listen.v1.media.transcribeFile(
-      file.buffer,
-      {
-        model: 'nova-3',
-        language: languageCode,
-        smart_format: true,
-      },
-    );
-
-    const responseData = result as any;
-
-const transcript =
-  responseData?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+    const result = await groq.audio.transcriptions.create({
+      file: await toFile(
+        file.buffer,
+        file.originalname || 'audio.webm',
+      ),
+      model: 'whisper-large-v3-turbo',
+      language: languageCode,
+      response_format: 'json',
+    });
 
     return res.json({
       success: true,
-      transcript,
+      transcript: result.text || '',
       language: languageCode,
-      provider: 'deepgram',
+      provider: 'groq-whisper',
     });
   } catch (err: any) {
-    console.error('[Deepgram] transcription failed:', err);
+    console.error('[Groq] transcription failed:', err);
 
     return res.status(502).json({
-      error: 'Deepgram speech-to-text request failed',
+      error: 'Groq speech-to-text request failed',
       details:
         process.env.NODE_ENV === 'development'
           ? err?.message || String(err)
@@ -975,6 +1006,7 @@ app.get('/api/services/status', (req, res) => {
       supabase: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_PUBLISHABLE_KEY),
       database: Boolean(process.env.DATABASE_URL),
       deepgram: Boolean(DEEPGRAM_API_KEY),
+      groq: Boolean(GROQ_API_KEY),
     },
     endpoints: {
       apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000/api/v1',
@@ -1183,7 +1215,7 @@ app.delete('/api/files/:id', requireRole('ARTISAN', 'ADMIN'), validateParam('id'
   return res.status(204).send();
 });
 
-// 1a. Speech-to-Text Transcription (Deepgram)
+// 1a. Speech-to-Text Transcription (Groq Whisper)
 app.post(
   '/api/speech-to-text',
   aiRateLimit,
