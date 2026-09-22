@@ -1146,57 +1146,231 @@ The artisan's selected language is ${LANGUAGE_NAMES[language] || 'English'}.
 );
 
 // 2. AI Product Information Extraction & Incomplete Info Detection
-app.post('/api/ai/extract-info', validateBody(['transcript', 'language', 'conversationHistory'], ['transcript']), validateString('transcript', 12000, true), validateLanguage('language'), validateConversationHistory, async (req, res) => {
-  try {
-    const { transcript, language = 'te', conversationHistory = [] } = req.body;
+app.post(
+  '/api/ai/extract-info',
+  validateBody(
+    ['transcript', 'language', 'conversationHistory'],
+    ['transcript']
+  ),
+  validateString('transcript', 12000, true),
+  validateLanguage('language'),
+  validateConversationHistory,
+  async (req, res) => {
+    const {
+      transcript,
+      language = 'te',
+      conversationHistory = [],
+    } = req.body;
 
     if (!transcript || typeof transcript !== 'string') {
-      return res.status(400).json({ error: 'Transcript is required' });
+      return res.status(400).json({
+        error: 'Transcript is required',
+      });
     }
 
+    const langName =
+      LANGUAGE_NAMES[language] || 'Telugu';
+
+    /*
+     * ---------------------------------------------------------
+     * FALLBACK EXTRACTION
+     * ---------------------------------------------------------
+     *
+     * This is used when Gemini is unavailable or quota is
+     * exhausted. The product flow can continue instead of
+     * returning HTTP 500.
+     */
+    const fallbackExtraction = () => {
+      const lower = transcript.toLowerCase();
+
+      const isShort =
+        transcript.trim().split(/\s+/).length < 7;
+
+      const hasMaterial =
+        /wood|silk|clay|cotton|brass|metal|leather|stone|pottery|చెక్క|పట్టు|మట్టి|ఇత్తడి|లోహం|తోలు|लकड़ी|रेशम|पीतल|मिट्टी/.test(
+          lower
+        );
+
+      const hasDimensions =
+        /inch|inches|cm|meter|meters|size|kg|gram|grams|feet|ft|అంగుళాలు|గ్రాములు|కిలో|పరిమాణం|इंच|ग्राम|किलो|आकार/.test(
+          lower
+        );
+
+      const hasTechnique =
+        /handmade|hand made|handcrafted|carved|carving|woven|weaving|loom|painted|painting|casting|pottery|handloom|చేతితో|చెక్కడం|నేత|చిత్రం|हस्तनिर्मित|बुनाई|चित्रकारी/.test(
+          lower
+        );
+
+      const isComplete =
+        !isShort &&
+        hasMaterial &&
+        (hasDimensions || hasTechnique);
+
+      const missing: string[] = [];
+
+      if (!hasMaterial) {
+        missing.push('material');
+      }
+
+      if (!hasDimensions && !hasTechnique) {
+        missing.push('dimensions');
+      }
+
+      let followUp = '';
+
+      if (!isComplete) {
+        if (language === 'te') {
+          followUp =
+            'మీ వస్తువు వివరాలను విన్నాను. అయితే ఉపయోగించిన మెటీరియల్ మరియు సుమారు పరిమాణం లేదా తయారీ విధానం గురించి మరికొంత వివరించండి.';
+        } else if (language === 'hi') {
+          followUp =
+            'मैंने आपके उत्पाद का विवरण समझ लिया है। कृपया उपयोग की गई सामग्री और अनुमानित आकार या बनाने की विधि के बारे में थोड़ा और बताएं।';
+        } else {
+          followUp =
+            'I have noted your product details. Please specify the material used and approximate dimensions or the handmade technique.';
+        }
+      }
+
+      let category = 'Other';
+
+      if (
+        /wood|wooden|carved|చెక్క|लकड़ी/.test(lower)
+      ) {
+        category = 'Wooden Crafts';
+      } else if (
+        /silk|cotton|saree|textile|handloom|woven|పట్టు|పత్తి|చీర|నేత|रेशम|कपड़ा/.test(
+          lower
+        )
+      ) {
+        category = 'Handloom Textiles';
+      } else if (
+        /brass|metal|bell metal|ఇత్తడి|లోహం|पीतल|धातु/.test(
+          lower
+        )
+      ) {
+        category = 'Metal Crafts';
+      } else if (
+        /clay|pottery|ceramic|మట్టి|కుండ|मिट्टी|मिट्टी के बर्तन/.test(
+          lower
+        )
+      ) {
+        category = 'Pottery & Ceramics';
+      } else if (
+        /leather|తోలు|चमड़ा/.test(lower)
+      ) {
+        category = 'Leather Crafts';
+      } else if (
+        /jewel|necklace|earring|ring|నగ|ఆభరణ|गहना|हार/.test(
+          lower
+        )
+      ) {
+        category = 'Jewelry';
+      } else if (
+        /stone|రాయి|శిల్పం|पत्थर/.test(lower)
+      ) {
+        category = 'Stone Carving';
+      } else if (
+        /painting|painted|చిత్రం|चित्र|पेंटिंग/.test(
+          lower
+        )
+      ) {
+        category = 'Paintings';
+      }
+
+      return {
+        isComplete,
+        missingFields: missing,
+        followUpQuestion: followUp,
+        extractedData: {
+          productName:
+            transcript.trim().slice(0, 80),
+
+          category,
+
+          material:
+            hasMaterial
+              ? 'Authentic Natural Material'
+              : 'Handmade Material',
+
+          craftTechnique:
+            hasTechnique
+              ? 'Traditional Handcraft'
+              : 'Traditional Handcraft',
+
+          dimensions:
+            hasDimensions
+              ? 'As described by artisan'
+              : 'Approximate dimensions not provided',
+
+          weight: 'Not specified',
+
+          timeToMake: 'Not specified',
+
+          features: [
+            '100% Handmade',
+            'Artisanal Heritage',
+          ],
+        },
+      };
+    };
+
+    /*
+     * ---------------------------------------------------------
+     * TRY GEMINI
+     * ---------------------------------------------------------
+     */
     const ai = getGemini();
-    const langName = LANGUAGE_NAMES[language] || 'Telugu';
 
     if (ai) {
-      const prompt = `
-You are Craft Mastery's AI Craft Assistant. An artisan has spoken or written about their handcrafted product.
-Artisan's Native Language: ${langName} (Code: ${language}).
+      try {
+        const prompt = `
+You are Craft Mastery's AI Craft Assistant.
+An artisan has spoken or written about their handcrafted product.
+
+Artisan's Native Language:
+${langName} (Code: ${language})
 
 Artisan's Current Statement:
 "${transcript}"
 
-Previous Conversation context (if any):
+Previous Conversation context:
 ${JSON.stringify(conversationHistory)}
 
 YOUR TASKS:
+
 1. Extract all identifiable craft details:
-   - productName: Name or description of craft
-   - category: One of [Wooden Crafts, Handloom Textiles, Metal Crafts, Pottery & Ceramics, Leather Crafts, Jewelry, Stone Carving, Paintings, Other]
-   - material: Materials used (e.g. Mango wood, Poniki wood, Mulberry silk, Bell metal, Clay, etc.)
-   - craftTechnique: Traditional technique used (e.g. Hand carving, Double ikat handloom, Lost-wax casting, Blue pottery)
-   - dimensions: Approximate size/height/width
-   - weight: Approximate weight
-   - timeToMake: Estimated time to craft one piece
-   - features: Array of distinct handmade qualities
+
+- productName: Name or description of craft
+- category: One of [Wooden Crafts, Handloom Textiles, Metal Crafts, Pottery & Ceramics, Leather Crafts, Jewelry, Stone Carving, Paintings, Other]
+- material: Materials used
+- craftTechnique: Traditional technique used
+- dimensions: Approximate size/height/width
+- weight: Approximate weight
+- timeToMake: Estimated time to craft one piece
+- features: Array of distinct handmade qualities
 
 2. INCOMPLETE INFORMATION CHECK:
-   Is the description sufficiently complete to publish a professional e-commerce product?
-   A complete listing REQUIRES at least:
-   - Name/Type of product
-   - Specific Material used
-   - Approximate Dimensions/Size OR Time to make OR handmade technique details.
 
-   If vital details are missing:
-   - Set "isComplete": false
-   - List missing fields in "missingFields" (e.g., ["material", "dimensions"])
-   - Formulate a polite, warm, encouraging follow-up question in the artisan's native language (${langName}) asking SPECIFICALLY for the missing details. For example in Telugu: "నేను ఇది చేతితో చేసిన చెక్క బొమ్మ అని అర్థం చేసుకున్నాను. మీరు దీనికి ఏ చెక్క ఉపయోగించారు మరియు సుమారు పరిమాణం ఎంత ఉంటుందో చెప్పగలరా?"
+A complete listing requires at least:
 
-   If sufficient information has been provided:
-   - Set "isComplete": true
-   - Set "missingFields": []
-   - "followUpQuestion": ""
+- Name/Type of product
+- Specific Material used
+- Approximate Dimensions/Size OR Time to make OR handmade technique details
 
-Respond ONLY with valid JSON matching this schema:
+If vital details are missing:
+
+- Set "isComplete": false
+- List missing fields in "missingFields"
+- Ask a polite follow-up question in the artisan's native language
+
+If enough information is available:
+
+- Set "isComplete": true
+- Set "missingFields": []
+- Set "followUpQuestion": ""
+
+Respond ONLY with valid JSON:
+
 {
   "isComplete": boolean,
   "missingFields": string[],
@@ -1214,62 +1388,114 @@ Respond ONLY with valid JSON matching this schema:
 }
 `;
 
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.2,
-        },
-      });
+        const response =
+          await ai.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: prompt,
+            config: {
+              responseMimeType:
+                'application/json',
+              temperature: 0.2,
+            },
+          });
 
-      const text = response.text?.trim() || '{}';
-      const result = JSON.parse(text);
-      return res.json(result);
-    }
+        const text =
+          response.text?.trim() || '{}';
 
-    // Fallback if Gemini key not set
-    const lower = transcript.toLowerCase();
-    const isShort = transcript.trim().split(/\s+/).length < 7;
-    const hasMaterial = /wood|silk|clay|cotton|brass|చెక్క|పట్టు|మట్టి|ఇత్తడి|लकड़ी|रेशम|पीतल/.test(lower);
-    const hasDimensions = /inch|cm|meter|size|kg|gram|అంగుళాలు|గ్రాములు|కిలో|इंच|ग्राम/.test(lower);
+        const result =
+          JSON.parse(text);
 
-    const isComplete = !isShort && hasMaterial;
-    const missing: string[] = [];
-    if (!hasMaterial) missing.push('material');
-    if (!hasDimensions) missing.push('dimensions');
+        return res.json(result);
 
-    let followUp = '';
-    if (!isComplete) {
-      if (language === 'te') {
-        followUp = 'నేను మీ వస్తువు వివరాలను విన్నాను. అయితే దీనికి ఉపయోగించిన మెటీరియల్ (చెక్క/వస్త్రం/లోహం) మరియు సుమారు పరిమాణం (సైజు) ఇంకా చెప్పలేదు. దయచేసి వివరించండి.';
-      } else if (language === 'hi') {
-        followUp = 'मैंने आपके उत्पाद का विवरण सुना। लेकिन आपने इसमें प्रयुक्त सामग्री और अनुमानित आकार अभी नहीं बताया है। कृपया स्पष्ट करें।';
-      } else {
-        followUp = 'I have noted the details so far. Could you please specify the exact materials used and approximate dimensions?';
+      } catch (error: any) {
+
+        console.error(
+          '========== GEMINI EXTRACTION ERROR =========='
+        );
+
+        console.error(error);
+
+        console.error(
+          '=============================================='
+        );
+
+        /*
+         * Gemini quota/rate-limit error.
+         *
+         * Instead of returning HTTP 500 and breaking
+         * Add Product, use local fallback extraction.
+         */
+        const errorText =
+          error?.message ||
+          error?.toString?.() ||
+          '';
+
+        const isQuotaError =
+          errorText.includes('429') ||
+          errorText.includes(
+            'RESOURCE_EXHAUSTED'
+          ) ||
+          errorText.includes(
+            'quota'
+          ) ||
+          errorText.includes(
+            'Quota exceeded'
+          );
+
+        if (isQuotaError) {
+
+          console.warn(
+            '[AI Extraction] Gemini quota exceeded. Using local fallback extraction.'
+          );
+
+          return res.json({
+            ...fallbackExtraction(),
+
+            aiFallback: true,
+
+            message:
+              'Gemini quota is temporarily unavailable. Product details were extracted using local fallback processing.',
+          });
+        }
+
+        /*
+         * For other Gemini errors, also use fallback
+         * so the artisan can continue adding the product.
+         */
+        console.warn(
+          '[AI Extraction] Gemini failed. Using fallback extraction.'
+        );
+
+        return res.json({
+          ...fallbackExtraction(),
+
+          aiFallback: true,
+
+          message:
+            'AI service is temporarily unavailable. Product details were extracted using fallback processing.',
+        });
       }
     }
 
+    /*
+     * ---------------------------------------------------------
+     * NO GEMINI KEY
+     * ---------------------------------------------------------
+     */
+    console.warn(
+      '[AI Extraction] Gemini API key is unavailable. Using fallback extraction.'
+    );
+
     return res.json({
-      isComplete,
-      missingFields: missing,
-      followUpQuestion: followUp,
-      extractedData: {
-        productName: transcript.slice(0, 40),
-        category: 'Wooden Crafts',
-        material: hasMaterial ? 'Authentic Natural Material' : 'Handmade Material',
-        craftTechnique: 'Traditional Handcraft',
-        dimensions: hasDimensions ? 'Standard handcrafted dimensions' : 'Approx 10-12 inches',
-        weight: '500g',
-        timeToMake: '3-5 days',
-        features: ['100% Handmade', 'Artisanal Heritage'],
-      },
+      ...fallbackExtraction(),
+
+      aiFallback: true,
+
+      message:
+        'AI service is not configured. Product details were extracted using fallback processing.',
     });
-  } catch (err: any) {
-    console.error('Error in /api/ai/extract-info:', err);
-    res.status(500).json({ error: 'Failed to extract product information' });
   }
-});
+);
 
 // 3. AI Professional Multilingual Product Description Generator
 app.post('/api/ai/generate-description', validateBody(['productData', 'artisanLanguage', 'targetLanguage'], ['productData']), validateAIProductData, validateLanguage('artisanLanguage'), validateLanguage('targetLanguage'), async (req, res) => {

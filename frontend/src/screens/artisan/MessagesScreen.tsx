@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { BackHeader } from '../../components/ui/BackHeader';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -24,6 +25,7 @@ import { EmptyState } from '../../components/ui/EmptyState';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { SectionHeader } from '../../components/ui/SectionHeader';
 import { Skeleton } from '../../components/ui/Skeleton';
+import { useNavigation } from '@react-navigation/native';
 
 /** One message bubble. Outgoing = artisan, incoming = customer/buyer. */
 /** Memoized so typing a reply does not re-render every bubble in the thread. */
@@ -74,6 +76,7 @@ const ConversationThread: React.FC<{ inquiry: any }> = ({ inquiry }) => {
 };
 
 export const MessagesScreen: React.FC = () => {
+  const navigation = useNavigation();
   const { t, lang } = useLanguage();
   const [sessionUser, setSessionUser] = useState<AuthUser | null>(null);
   const [inquiries, setInquiries] = useState<any[]>([]);
@@ -111,7 +114,14 @@ export const MessagesScreen: React.FC = () => {
       }
     } catch (err: any) {
       console.warn('Inquiries load error:', err);
-      setLoadError(`Could not load your messages. ${err.message || ''}`);
+      const message = err?.message || String(err);
+      if (/404|Cannot GET \/api\/inquiries|Not Found/i.test(message)) {
+        setLoadError(
+          'Messages API is not available. Please make sure the backend is running and the GET /api/inquiries route is enabled.'
+        );
+      } else {
+        setLoadError(`Could not load your messages. ${message}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -160,23 +170,24 @@ export const MessagesScreen: React.FC = () => {
     const inquiry = selectedInquiry;
     return (
       <SafeAreaView style={styles.safeArea}>
+         <BackHeader
+    title="Messages"
+    navigation={navigation}
+  />
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           {/* Back to inbox */}
-          <View style={styles.convoTopBar}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t('backToInbox')}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              onPress={() => setSelectedInquiry(null)}
-              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-            >
-              <Ionicons name="chevron-back" size={20} color={PALETTE.primaryLight} />
-              <Text style={styles.backLabel}>{t('backToInbox')}</Text>
-            </Pressable>
-          </View>
+          <View style={styles.topBar}>
+  <Pressable
+    onPress={() => navigation.navigate('Dashboard' as never)}
+    style={styles.backButton}
+  >
+    <Ionicons name="arrow-back" size={24} color={PALETTE.primary} />
+    <Text style={styles.backText}>Back</Text>
+  </Pressable>
+</View>
 
           {/* Conversation context */}
           <Card style={styles.convoContext}>
@@ -275,6 +286,17 @@ export const MessagesScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
+        {/* Back to dashboard */}
+        <Pressable
+          onPress={() => navigation.navigate('Dashboard' as never)}
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Back to Dashboard"
+        >
+          <Ionicons name="arrow-back" size={22} color={PALETTE.primaryLight} />
+          <Text style={styles.backLabel}>Back</Text>
+        </Pressable>
+
         {/* 1. Page header */}
         <View style={styles.pageHeader}>
           <Badge label={t('inboxBadge')} tone="primary" />
@@ -346,6 +368,24 @@ export const MessagesScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  topBar: {
+  marginBottom: SPACING.md,
+},
+
+backButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  alignSelf: 'flex-start',
+  paddingVertical: 8,
+  paddingHorizontal: 4,
+},
+
+backText: {
+  marginLeft: 6,
+  fontSize: 15,
+  fontWeight: '600',
+  color: PALETTE.primary,
+},
   safeArea: {
     flex: 1,
     backgroundColor: PALETTE.background,
@@ -418,12 +458,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     paddingTop: SPACING.sm,
   },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    minHeight: TOUCH_TARGET.minHeight,
-  },
+ 
   backLabel: {
     color: PALETTE.primaryLight,
     fontSize: 15,

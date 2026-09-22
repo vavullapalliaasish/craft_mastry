@@ -13,6 +13,15 @@ import { INITIAL_PRODUCTS, INITIAL_INQUIRIES } from './src/data/mockData.ts';
 import { provisionRole, requireAuth, requireRole, samePhone } from './serverAuth.ts';
 
 dotenv.config();
+
+// Keep phone normalization local to this server file.
+// This avoids requiring normalizePhone to be exported from serverAuth.ts.
+function normalizePhone(phone: unknown): string {
+  if (typeof phone !== 'string' && typeof phone !== 'number') return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
 // Fallback for `npm run dev` executed from the repository root: load backend/.env too.
 dotenv.config({ path: path.resolve(process.cwd(), 'backend', '.env') });
 
@@ -793,6 +802,7 @@ function validateStoredFileAccess(fileId: string, auth: NonNullable<Express.Requ
 let aiClient: GoogleGenAI | null = null;
 function getGemini(): GoogleGenAI | null {
   if (!aiClient && process.env.GEMINI_API_KEY) {
+    console.log('[Gemini] Initializing Gemini client...');
     aiClient = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
@@ -1034,60 +1044,154 @@ app.post(
   validateString('message', 4000, true),
   validateLanguage('language'),
   async (req, res) => {
-    try {
-      const { message, language = 'en', role = 'GUEST', screen = 'current screen' } = req.body;
-      const ai = getGemini();
-      const langName = LANGUAGE_NAMES[language] || 'English';
+    const fallback: Record<string, string> = {
+      te: 'నేను Craft Mastery గురించి సహాయం చేయగలను. మీ ప్రశ్నను మళ్లీ అడగండి.',
+      hi: 'मैं Craft Mastery के बारे में आपकी मदद कर सकता हूँ। अपना सवाल फिर से पूछें।',
+      ta: 'Craft Mastery பற்றி நான் உதவ முடியும். உங்கள் கேள்வியை மீண்டும் கேளுங்கள்.',
+      kn: 'Craft Mastery ಬಗ್ಗೆ ನಾನು ಸಹಾಯ ಮಾಡಬಹುದು. ನಿಮ್ಮ ಪ್ರಶ್ನೆಯನ್ನು மீண்டும் ಕೇಳಿ.',
+      mr: 'मी Craft Mastery बद्दल मदत करू शकतो. तुमचा प्रश्न पुन्हा विचारा.',
+      bn: 'আমি Craft Mastery সম্পর্কে সাহায্য করতে পারি। আপনার প্রশ্নটি আবার করুন।',
+      ml: 'Craft Mastery ഉപയോഗിക്കാൻ ഞാൻ സഹായിക്കാം. നിങ്ങളുടെ ചോദ്യം വീണ്ടും ചോദിക്കൂ.',
+      gu: 'હું Craft Mastery વિશે મદદ કરી શકું છું. તમારો પ્રશ્ન ફરી પૂછો.',
+      pa: 'ਮੈਂ Craft Mastery ਬਾਰੇ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ। ਆਪਣਾ ਸਵਾਲ ਦੁਬਾਰਾ ਪੁੱਛੋ।',
+      ur: 'میں Craft Mastery کے بارے میں مدد کر سکتا ہوں۔ اپنا سوال دوبارہ پوچھیں۔',
+      or: 'ମୁଁ Craft Mastery ବିଷୟରେ ସାହାଯ୍ୟ କରିପାରିବି। ଆପଣଙ୍କ ପ୍ରଶ୍ନ ପୁଣି ପଚାରନ୍ତୁ।',
+      as: 'মই Craft Mastery সম্পৰ্কে সহায় কৰিব পাৰোঁ। আপোনাৰ প্ৰশ্নটো আকৌ সোধক।',
+      en: 'I can help you with Craft Mastery. Please ask your question again.',
+    };
 
-      if (!ai) {
-        const fallback: Record<string, string> = {
-          te: 'నేను మీకు సహాయం చేయడానికి సిద్ధంగా ఉన్నాను. మైక్ నొక్కి ప్రశ్న అడగండి లేదా సంబంధిత స్క్రీన్‌ను తెరవండి.',
-          hi: 'मैं आपकी मदद के लिए तैयार हूँ। माइक दबाकर अपना सवाल पूछें या संबंधित स्क्रीन खोलें।',
-          ta: 'நான் உதவ தயாராக இருக்கிறேன். மைக்கை அழுத்தி கேள்வி கேளுங்கள் அல்லது தேவையான திரையைத் திறக்கவும்.',
-          kn: 'ನಾನು ಸಹಾಯ ಮಾಡಲು ಸಿದ್ಧನಿದ್ದೇನೆ. ಮೈಕ್ ಒತ್ತಿ ಪ್ರಶ್ನೆ ಕೇಳಿ ಅಥವಾ ಸಂಬಂಧಿತ ಪುಟವನ್ನು ತೆರೆಯಿರಿ.',
-          en: 'I can help you use Craft Mastery. Ask me how to create a craft listing, find crafts, check messages, or use this screen.',
-        };
-        return res.json({ answer: fallback[language] || fallback.en, language });
-      }
+    const language =
+      typeof req.body?.language === 'string' &&
+      SUPPORTED_LANGUAGES.has(req.body.language)
+        ? req.body.language
+        : 'en';
 
-      const prompt = `
-You are the friendly voice assistant inside the Craft Mastery mobile app.
-The user may be an artisan, buyer/customer, or a guest.
-Current role: ${role}
+    const {
+      message,
+      role = 'GUEST',
+      screen = 'current screen',
+    } = req.body;
+
+    const langName = LANGUAGE_NAMES[language] || 'English';
+
+    const assistantSystemPrompt = `
+You are the voice assistant inside the Craft Mastery mobile app.
+
+Your job is to answer the user's ACTUAL question, not give a generic welcome message.
+
+Current user role: ${role}
 Current screen: ${screen}
-User language: ${langName} (${language})
-User said: "${message}"
+User selected language: ${langName} (${language})
 
-Help the user understand and use the app. Give practical, simple instructions.
-For artisans, explain photo upload, AI enhancement, voice descriptions, AI cataloging,
-pricing, publishing, catalog and buyer messages.
-For buyers, explain marketplace search, craft details, inquiries and profile.
-For guests, explain language selection, login/register and what the app does.
-Never ask for passwords, OTP codes, bank details, Aadhaar numbers, or other secrets.
-Do not claim to have performed an action unless the app actually did it.
-Reply in the user's selected language. Keep the answer to 1-3 short sentences so it is
-easy to hear aloud on a phone.
+Craft Mastery app context:
+- Artisans can create craft listings by selecting/taking a craft photo.
+- The app can enhance the craft photo with AI.
+- The app can generate craft/product information and descriptions.
+- Artisans can add price, stock and product details.
+- A completed AI craft draft can be uploaded to My Products.
+- Artisans can view My Products, Messages and Profile.
+- Buyers/customers can browse crafts, view craft details and send inquiries.
+- The app supports multiple Indian languages and voice interaction.
+
+Rules:
+1. Directly answer what the user asked.
+2. Give practical step-by-step instructions when the user asks "how".
+3. If the question is unrelated to Craft Mastery, answer normally when possible.
+4. Never invent that an action was completed.
+5. Never ask for passwords, OTPs, Aadhaar numbers, bank details or other secrets.
+6. Reply in the user's selected language.
+7. Keep voice answers concise: normally 2-5 short sentences.
 `;
 
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          responseMimeType: 'text/plain',
-          temperature: 0.3,
-        },
-      });
+    // Primary provider: Gemini.
+    try {
+      const ai = getGemini();
 
-      return res.json({
-        answer: response.text?.trim() || 'I can help you use Craft Mastery. Please ask me again.',
-        language,
+      if (ai) {
+        const prompt = `${assistantSystemPrompt}
+
+User said:
+"${String(message).trim()}"
+
+Answer the user's actual question now.`;
+
+        const response = await ai.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: prompt,
+          config: {
+            responseMimeType: 'text/plain',
+            temperature: 0.3,
+          },
+        });
+
+        const answer = response.text?.trim();
+
+        if (answer) {
+          return res.json({
+            answer,
+            language,
+            provider: 'gemini',
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Assistant] Gemini failed; trying Groq fallback:', {
+        message: err?.message || String(err),
+        status: err?.status,
+        code: err?.code,
       });
-    } catch (err) {
-      console.error('[Assistant] public assistant failed:', err);
-      return clientError(res, 500, 'Voice assistant is temporarily unavailable');
     }
+
+    // Secondary provider: Groq.
+    // This keeps the assistant conversational when Gemini quota/model/network
+    // errors occur. GPT-OSS 20B is currently supported by Groq.
+    try {
+      if (groq) {
+        const completion = await groq.chat.completions.create({
+          model: 'openai/gpt-oss-20b',
+          messages: [
+            {
+              role: 'system',
+              content: assistantSystemPrompt,
+            },
+            {
+              role: 'user',
+              content: String(message).trim(),
+            },
+          ],
+          temperature: 0.3,
+          max_completion_tokens: 300,
+        });
+
+        const answer = completion.choices?.[0]?.message?.content?.trim();
+
+        if (answer) {
+          return res.json({
+            answer,
+            language,
+            provider: 'groq',
+          });
+        }
+      } else {
+        console.warn('[Assistant] GROQ_API_KEY is not configured.');
+      }
+    } catch (err: any) {
+      console.error('[Assistant] Groq fallback failed:', {
+        message: err?.message || String(err),
+        status: err?.status,
+        code: err?.code,
+      });
+    }
+
+    // Last-resort local response.
+    return res.json({
+      answer: fallback[language] || fallback.en,
+      language,
+      provider: 'local-fallback',
+    });
   },
 );
+
 
 // All application data, AI, profile, and mutation routes require a verified identity.
 app.use('/api', authRateLimit, requireAuth);
@@ -1188,6 +1292,81 @@ app.post(
 app.use('/api/products', mutationRateLimit);
 app.use('/api/inquiries', mutationRateLimit);
 app.use('/api/users', mutationRateLimit);
+
+// -------------------------------------------------------------
+// User profile endpoints
+// -------------------------------------------------------------
+// The mobile auth adapter syncs the authenticated user's profile
+// through these routes. The phone/uid are always taken from the
+// authenticated identity so one user cannot save another user's
+// profile.
+app.post('/api/users', (req, res) => {
+  const auth = req.auth!;
+  const body = req.body || {};
+
+  const requestedPhone = normalizePhone(body.phone);
+  if (requestedPhone && requestedPhone !== auth.phone) {
+    return clientError(res, 403, 'You can only update your own profile');
+  }
+
+  const existingIndex = usersDb.findIndex(
+    (user) => user.uid === auth.uid || samePhone(user.phone, auth.phone),
+  );
+
+  const existing = existingIndex >= 0 ? usersDb[existingIndex] : null;
+
+  const profile = {
+    ...(existing || {}),
+    uid: auth.uid,
+    phone: auth.phone,
+    name: typeof body.name === 'string' && body.name.trim()
+      ? body.name.trim().slice(0, 200)
+      : existing?.name || 'Artisan Maker',
+    email: typeof body.email === 'string'
+      ? body.email.trim().slice(0, 200)
+      : existing?.email || '',
+    location: typeof body.location === 'string'
+      ? body.location.trim().slice(0, 300)
+      : existing?.location || '',
+    role: auth.role,
+    onboardingComplete: body.onboardingComplete !== undefined
+      ? Boolean(body.onboardingComplete)
+      : Boolean(existing?.onboardingComplete),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existingIndex >= 0) {
+    usersDb[existingIndex] = profile;
+  } else {
+    usersDb.push(profile);
+  }
+
+  saveStoreToDisk();
+  return res.status(existingIndex >= 0 ? 200 : 201).json({ user: profile });
+});
+
+app.get('/api/users/:phone', (req, res) => {
+  const auth = req.auth!;
+  const phone = normalizePhone(req.params.phone);
+
+  if (!phone) {
+    return clientError(res, 400, 'Invalid phone number');
+  }
+
+  if (auth.role !== 'ADMIN' && phone !== auth.phone) {
+    return clientError(res, 403, 'You can only view your own profile');
+  }
+
+  const user = usersDb.find(
+    (item) => samePhone(item.phone, phone),
+  );
+
+  if (!user) {
+    return clientError(res, 404, 'User not found');
+  }
+
+  return res.json({ user });
+});
 
 app.get('/api/files/:id', validateParam('id', /^[0-9a-f-]{36}$/), (req, res) => {
   const file = validateStoredFileAccess(req.params.id, req.auth!);
@@ -1325,57 +1504,231 @@ The artisan's selected language is ${LANGUAGE_NAMES[language] || 'English'}.
 );
 
 // 2. AI Product Information Extraction & Incomplete Info Detection
-app.post('/api/ai/extract-info', validateBody(['transcript', 'language', 'conversationHistory'], ['transcript']), validateString('transcript', 12000, true), validateLanguage('language'), validateConversationHistory, async (req, res) => {
-  try {
-    const { transcript, language = 'te', conversationHistory = [] } = req.body;
+app.post(
+  '/api/ai/extract-info',
+  validateBody(
+    ['transcript', 'language', 'conversationHistory'],
+    ['transcript']
+  ),
+  validateString('transcript', 12000, true),
+  validateLanguage('language'),
+  validateConversationHistory,
+  async (req, res) => {
+    const {
+      transcript,
+      language = 'te',
+      conversationHistory = [],
+    } = req.body;
 
     if (!transcript || typeof transcript !== 'string') {
-      return res.status(400).json({ error: 'Transcript is required' });
+      return res.status(400).json({
+        error: 'Transcript is required',
+      });
     }
 
+    const langName =
+      LANGUAGE_NAMES[language] || 'Telugu';
+
+    /*
+     * ---------------------------------------------------------
+     * FALLBACK EXTRACTION
+     * ---------------------------------------------------------
+     *
+     * This is used when Gemini is unavailable or quota is
+     * exhausted. The product flow can continue instead of
+     * returning HTTP 500.
+     */
+    const fallbackExtraction = () => {
+      const lower = transcript.toLowerCase();
+
+      const isShort =
+        transcript.trim().split(/\s+/).length < 7;
+
+      const hasMaterial =
+        /wood|silk|clay|cotton|brass|metal|leather|stone|pottery|చెక్క|పట్టు|మట్టి|ఇత్తడి|లోహం|తోలు|लकड़ी|रेशम|पीतल|मिट्टी/.test(
+          lower
+        );
+
+      const hasDimensions =
+        /inch|inches|cm|meter|meters|size|kg|gram|grams|feet|ft|అంగుళాలు|గ్రాములు|కిలో|పరిమాణం|इंच|ग्राम|किलो|आकार/.test(
+          lower
+        );
+
+      const hasTechnique =
+        /handmade|hand made|handcrafted|carved|carving|woven|weaving|loom|painted|painting|casting|pottery|handloom|చేతితో|చెక్కడం|నేత|చిత్రం|हस्तनिर्मित|बुनाई|चित्रकारी/.test(
+          lower
+        );
+
+      const isComplete =
+        !isShort &&
+        hasMaterial &&
+        (hasDimensions || hasTechnique);
+
+      const missing: string[] = [];
+
+      if (!hasMaterial) {
+        missing.push('material');
+      }
+
+      if (!hasDimensions && !hasTechnique) {
+        missing.push('dimensions');
+      }
+
+      let followUp = '';
+
+      if (!isComplete) {
+        if (language === 'te') {
+          followUp =
+            'మీ వస్తువు వివరాలను విన్నాను. అయితే ఉపయోగించిన మెటీరియల్ మరియు సుమారు పరిమాణం లేదా తయారీ విధానం గురించి మరికొంత వివరించండి.';
+        } else if (language === 'hi') {
+          followUp =
+            'मैंने आपके उत्पाद का विवरण समझ लिया है। कृपया उपयोग की गई सामग्री और अनुमानित आकार या बनाने की विधि के बारे में थोड़ा और बताएं।';
+        } else {
+          followUp =
+            'I have noted your product details. Please specify the material used and approximate dimensions or the handmade technique.';
+        }
+      }
+
+      let category = 'Other';
+
+      if (
+        /wood|wooden|carved|చెక్క|लकड़ी/.test(lower)
+      ) {
+        category = 'Wooden Crafts';
+      } else if (
+        /silk|cotton|saree|textile|handloom|woven|పట్టు|పత్తి|చీర|నేత|रेशम|कपड़ा/.test(
+          lower
+        )
+      ) {
+        category = 'Handloom Textiles';
+      } else if (
+        /brass|metal|bell metal|ఇత్తడి|లోహం|पीतल|धातु/.test(
+          lower
+        )
+      ) {
+        category = 'Metal Crafts';
+      } else if (
+        /clay|pottery|ceramic|మట్టి|కుండ|मिट्टी|मिट्टी के बर्तन/.test(
+          lower
+        )
+      ) {
+        category = 'Pottery & Ceramics';
+      } else if (
+        /leather|తోలు|चमड़ा/.test(lower)
+      ) {
+        category = 'Leather Crafts';
+      } else if (
+        /jewel|necklace|earring|ring|నగ|ఆభరణ|गहना|हार/.test(
+          lower
+        )
+      ) {
+        category = 'Jewelry';
+      } else if (
+        /stone|రాయి|శిల్పం|पत्थर/.test(lower)
+      ) {
+        category = 'Stone Carving';
+      } else if (
+        /painting|painted|చిత్రం|चित्र|पेंटिंग/.test(
+          lower
+        )
+      ) {
+        category = 'Paintings';
+      }
+
+      return {
+        isComplete,
+        missingFields: missing,
+        followUpQuestion: followUp,
+        extractedData: {
+          productName:
+            transcript.trim().slice(0, 80),
+
+          category,
+
+          material:
+            hasMaterial
+              ? 'Authentic Natural Material'
+              : 'Handmade Material',
+
+          craftTechnique:
+            hasTechnique
+              ? 'Traditional Handcraft'
+              : 'Traditional Handcraft',
+
+          dimensions:
+            hasDimensions
+              ? 'As described by artisan'
+              : 'Approximate dimensions not provided',
+
+          weight: 'Not specified',
+
+          timeToMake: 'Not specified',
+
+          features: [
+            '100% Handmade',
+            'Artisanal Heritage',
+          ],
+        },
+      };
+    };
+
+    /*
+     * ---------------------------------------------------------
+     * TRY GEMINI
+     * ---------------------------------------------------------
+     */
     const ai = getGemini();
-    const langName = LANGUAGE_NAMES[language] || 'Telugu';
 
     if (ai) {
-      const prompt = `
-You are Craft Mastery's AI Craft Assistant. An artisan has spoken or written about their handcrafted product.
-Artisan's Native Language: ${langName} (Code: ${language}).
+      try {
+        const prompt = `
+You are Craft Mastery's AI Craft Assistant.
+An artisan has spoken or written about their handcrafted product.
+
+Artisan's Native Language:
+${langName} (Code: ${language})
 
 Artisan's Current Statement:
 "${transcript}"
 
-Previous Conversation context (if any):
+Previous Conversation context:
 ${JSON.stringify(conversationHistory)}
 
 YOUR TASKS:
+
 1. Extract all identifiable craft details:
-   - productName: Name or description of craft
-   - category: One of [Wooden Crafts, Handloom Textiles, Metal Crafts, Pottery & Ceramics, Leather Crafts, Jewelry, Stone Carving, Paintings, Other]
-   - material: Materials used (e.g. Mango wood, Poniki wood, Mulberry silk, Bell metal, Clay, etc.)
-   - craftTechnique: Traditional technique used (e.g. Hand carving, Double ikat handloom, Lost-wax casting, Blue pottery)
-   - dimensions: Approximate size/height/width
-   - weight: Approximate weight
-   - timeToMake: Estimated time to craft one piece
-   - features: Array of distinct handmade qualities
+
+- productName: Name or description of craft
+- category: One of [Wooden Crafts, Handloom Textiles, Metal Crafts, Pottery & Ceramics, Leather Crafts, Jewelry, Stone Carving, Paintings, Other]
+- material: Materials used
+- craftTechnique: Traditional technique used
+- dimensions: Approximate size/height/width
+- weight: Approximate weight
+- timeToMake: Estimated time to craft one piece
+- features: Array of distinct handmade qualities
 
 2. INCOMPLETE INFORMATION CHECK:
-   Is the description sufficiently complete to publish a professional e-commerce product?
-   A complete listing REQUIRES at least:
-   - Name/Type of product
-   - Specific Material used
-   - Approximate Dimensions/Size OR Time to make OR handmade technique details.
 
-   If vital details are missing:
-   - Set "isComplete": false
-   - List missing fields in "missingFields" (e.g., ["material", "dimensions"])
-   - Formulate a polite, warm, encouraging follow-up question in the artisan's native language (${langName}) asking SPECIFICALLY for the missing details. For example in Telugu: "నేను ఇది చేతితో చేసిన చెక్క బొమ్మ అని అర్థం చేసుకున్నాను. మీరు దీనికి ఏ చెక్క ఉపయోగించారు మరియు సుమారు పరిమాణం ఎంత ఉంటుందో చెప్పగలరా?"
+A complete listing requires at least:
 
-   If sufficient information has been provided:
-   - Set "isComplete": true
-   - Set "missingFields": []
-   - "followUpQuestion": ""
+- Name/Type of product
+- Specific Material used
+- Approximate Dimensions/Size OR Time to make OR handmade technique details
 
-Respond ONLY with valid JSON matching this schema:
+If vital details are missing:
+
+- Set "isComplete": false
+- List missing fields in "missingFields"
+- Ask a polite follow-up question in the artisan's native language
+
+If enough information is available:
+
+- Set "isComplete": true
+- Set "missingFields": []
+- Set "followUpQuestion": ""
+
+Respond ONLY with valid JSON:
+
 {
   "isComplete": boolean,
   "missingFields": string[],
@@ -1393,62 +1746,114 @@ Respond ONLY with valid JSON matching this schema:
 }
 `;
 
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.2,
-        },
-      });
+        const response =
+          await ai.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: prompt,
+            config: {
+              responseMimeType:
+                'application/json',
+              temperature: 0.2,
+            },
+          });
 
-      const text = response.text?.trim() || '{}';
-      const result = JSON.parse(text);
-      return res.json(result);
-    }
+        const text =
+          response.text?.trim() || '{}';
 
-    // Fallback if Gemini key not set
-    const lower = transcript.toLowerCase();
-    const isShort = transcript.trim().split(/\s+/).length < 7;
-    const hasMaterial = /wood|silk|clay|cotton|brass|చెక్క|పట్టు|మట్టి|ఇత్తడి|लकड़ी|रेशम|पीतल/.test(lower);
-    const hasDimensions = /inch|cm|meter|size|kg|gram|అంగుళాలు|గ్రాములు|కిలో|इंच|ग्राम/.test(lower);
+        const result =
+          JSON.parse(text);
 
-    const isComplete = !isShort && hasMaterial;
-    const missing: string[] = [];
-    if (!hasMaterial) missing.push('material');
-    if (!hasDimensions) missing.push('dimensions');
+        return res.json(result);
 
-    let followUp = '';
-    if (!isComplete) {
-      if (language === 'te') {
-        followUp = 'నేను మీ వస్తువు వివరాలను విన్నాను. అయితే దీనికి ఉపయోగించిన మెటీరియల్ (చెక్క/వస్త్రం/లోహం) మరియు సుమారు పరిమాణం (సైజు) ఇంకా చెప్పలేదు. దయచేసి వివరించండి.';
-      } else if (language === 'hi') {
-        followUp = 'मैंने आपके उत्पाद का विवरण सुना। लेकिन आपने इसमें प्रयुक्त सामग्री और अनुमानित आकार अभी नहीं बताया है। कृपया स्पष्ट करें।';
-      } else {
-        followUp = 'I have noted the details so far. Could you please specify the exact materials used and approximate dimensions?';
+      } catch (error: any) {
+
+        console.error(
+          '========== GEMINI EXTRACTION ERROR =========='
+        );
+
+        console.error(error);
+
+        console.error(
+          '=============================================='
+        );
+
+        /*
+         * Gemini quota/rate-limit error.
+         *
+         * Instead of returning HTTP 500 and breaking
+         * Add Product, use local fallback extraction.
+         */
+        const errorText =
+          error?.message ||
+          error?.toString?.() ||
+          '';
+
+        const isQuotaError =
+          errorText.includes('429') ||
+          errorText.includes(
+            'RESOURCE_EXHAUSTED'
+          ) ||
+          errorText.includes(
+            'quota'
+          ) ||
+          errorText.includes(
+            'Quota exceeded'
+          );
+
+        if (isQuotaError) {
+
+          console.warn(
+            '[AI Extraction] Gemini quota exceeded. Using local fallback extraction.'
+          );
+
+          return res.json({
+            ...fallbackExtraction(),
+
+            aiFallback: true,
+
+            message:
+              'Gemini quota is temporarily unavailable. Product details were extracted using local fallback processing.',
+          });
+        }
+
+        /*
+         * For other Gemini errors, also use fallback
+         * so the artisan can continue adding the product.
+         */
+        console.warn(
+          '[AI Extraction] Gemini failed. Using fallback extraction.'
+        );
+
+        return res.json({
+          ...fallbackExtraction(),
+
+          aiFallback: true,
+
+          message:
+            'AI service is temporarily unavailable. Product details were extracted using fallback processing.',
+        });
       }
     }
 
+    /*
+     * ---------------------------------------------------------
+     * NO GEMINI KEY
+     * ---------------------------------------------------------
+     */
+    console.warn(
+      '[AI Extraction] Gemini API key is unavailable. Using fallback extraction.'
+    );
+
     return res.json({
-      isComplete,
-      missingFields: missing,
-      followUpQuestion: followUp,
-      extractedData: {
-        productName: transcript.slice(0, 40),
-        category: 'Wooden Crafts',
-        material: hasMaterial ? 'Authentic Natural Material' : 'Handmade Material',
-        craftTechnique: 'Traditional Handcraft',
-        dimensions: hasDimensions ? 'Standard handcrafted dimensions' : 'Approx 10-12 inches',
-        weight: '500g',
-        timeToMake: '3-5 days',
-        features: ['100% Handmade', 'Artisanal Heritage'],
-      },
+      ...fallbackExtraction(),
+
+      aiFallback: true,
+
+      message:
+        'AI service is not configured. Product details were extracted using fallback processing.',
     });
-  } catch (err: any) {
-    console.error('Error in /api/ai/extract-info:', err);
-    res.status(500).json({ error: 'Failed to extract product information' });
   }
-});
+);
 
 // 3. AI Professional Multilingual Product Description Generator
 app.post('/api/ai/generate-description', validateBody(['productData', 'artisanLanguage', 'targetLanguage'], ['productData']), validateAIProductData, validateLanguage('artisanLanguage'), validateLanguage('targetLanguage'), async (req, res) => {
@@ -1818,6 +2223,99 @@ app.post('/api/products', requireRole('ARTISAN', 'ADMIN'), validateBody([...PROD
     clientError(res, 400, 'Invalid product image');
   }
 });
+
+// 9. Inquiries & 2-way Messages CRUD
+// MessagesScreen calls GET /api/inquiries when the artisan opens the inbox.
+// This route was missing from the current server.ts, which caused:
+//   Cannot GET /api/inquiries (404)
+app.get('/api/inquiries', (req, res) => {
+  const auth = req.auth!;
+  const inquiries = visibleInquiriesFor(auth).map((inquiry) =>
+    serializeInquiry(inquiry, auth)
+  );
+  return res.json(inquiries);
+});
+
+// Customer creates a new inquiry / bulk-order request.
+app.post(
+  '/api/inquiries',
+  validateInquiryInput,
+  (req, res) => {
+    const auth = req.auth!;
+    const body = req.body || {};
+    const product = productsDb.find((item) => item.id === body.productId);
+
+    if (!product) {
+      return clientError(res, 404, 'Product not found');
+    }
+
+    const inquiry = {
+      ...body,
+      id: body.id || `inq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      productId: product.id,
+      productTitle: body.productTitle || product.title || 'Handcrafted Product',
+      productImage: body.productImage || product.enhancedImageUrl || product.originalImageUrl || '',
+      artisanId: product.artisanId,
+      artisanPhone: product.artisanPhone,
+      artisanName: product.artisanName || 'Artisan Maker',
+      customerId: auth.uid,
+      customerName: body.customerName || 'Customer',
+      customerPhone: auth.phone,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: 'PENDING',
+      messages: Array.isArray(body.messages) ? body.messages : [],
+    };
+
+    inquiriesDb.unshift(inquiry);
+    saveStoreToDisk();
+
+    return res.status(201).json(serializeInquiry(inquiry, auth));
+  },
+);
+
+// Artisan replies to a customer's inquiry.
+// The frontend uses /api/inquiries/:id/reply.
+app.post(
+  '/api/inquiries/:id/reply',
+  validateParam('id', /^[-A-Za-z0-9_]+$/),
+  validateMessageInput,
+  (req, res) => {
+    const auth = req.auth!;
+    const inquiry = inquiriesDb.find((item) => item.id === req.params.id);
+
+    if (!inquiry) {
+      return clientError(res, 404, 'Inquiry not found');
+    }
+
+    const visible = visibleInquiriesFor(auth).some((item) => item.id === inquiry.id);
+    if (!visible) {
+      return clientError(res, 403, 'You do not have access to this inquiry');
+    }
+
+    const originalText = String(req.body.originalText || req.body.text || '').trim();
+    const message = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      inquiryId: inquiry.id,
+      senderRole: req.body.senderRole || auth.role,
+      senderName: req.body.senderName || inquiry.artisanName || 'Artisan Maker',
+      originalText,
+      originalLang: req.body.originalLang || 'en',
+      // Keep the original text as the display fallback. A translation service
+      // can populate translatedText later without changing this API contract.
+      translatedText: req.body.translatedText || originalText,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (!Array.isArray(inquiry.messages)) inquiry.messages = [];
+    inquiry.messages.push(message);
+    inquiry.status = 'IN_PROGRESS';
+    inquiry.updatedAt = new Date().toISOString();
+    saveStoreToDisk();
+
+    return res.status(201).json(serializeInquiry(inquiry, auth));
+  },
+);
 
 // -------------------------------------------------------------
 // Start the server

@@ -85,27 +85,27 @@ export const RootNavigator: React.FC = () => {
   /*
    * Logout
    */
-  const handleLogout = async () => {
-    try {
-      await AuthAdapter.signOut();
-    } catch (err) {
-      console.warn(
-        '[RootNavigator] Logout error:',
-        err
+ const handleLogout = () => {
+  console.log('[RootNavigator] Logout started');
+
+  // Change UI immediately.
+  // This guarantees that the user leaves the authenticated
+  // screens even if AsyncStorage is slow.
+  setCurrentUser(null);
+  setCurrentScreen('WelcomeLanguage');
+
+  // Clear the stored login session in the background.
+  AuthAdapter.signOut()
+    .then(() => {
+      console.log('[RootNavigator] Auth session cleared');
+    })
+    .catch((error) => {
+      console.error(
+        '[RootNavigator] Failed to clear auth session:',
+        error,
       );
-    }
-
-    setCurrentUser(null);
-
-    /*
-     * Reset voice guide to the
-     * first authentication screen.
-     */
-    setCurrentScreen(
-      'WelcomeLanguage'
-    );
-  };
-
+    });
+};
   /*
    * Switch between Artisan and Customer
    */

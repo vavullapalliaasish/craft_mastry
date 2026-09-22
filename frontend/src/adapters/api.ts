@@ -225,7 +225,73 @@ async function getAuthToken():
     await StorageAdapter
       .getAuthSession();
 
-  return session?.token;
+  /*
+   * Normal authenticated session.
+   */
+  if (session?.token) {
+    console.log(
+      '[API AUTH] Using stored token:',
+      session.token,
+    );
+
+    return session.token;
+  }
+
+  /*
+   * Development fallback.
+   *
+   * The current backend accepts:
+   *   dev:<10 digit phone>
+   *
+   * Older sessions may have been saved before the
+   * token field was added. In that case derive the
+   * development token from the stored phone number.
+   */
+  const phone = String(
+    session?.phone || '',
+  ).replace(/\D/g, '');
+
+  if (/^\d{10}$/.test(phone)) {
+    const devToken = `dev:${phone}`;
+
+    console.log(
+      '[API AUTH] Creating token from stored phone:',
+      devToken,
+    );
+
+    try {
+      if (session) {
+        await StorageAdapter.setAuthSession({
+          ...session,
+          token: devToken,
+        });
+      }
+    } catch (error) {
+      console.warn(
+        '[API AUTH] Could not save generated token:',
+        error,
+      );
+    }
+
+    return devToken;
+  }
+
+  /*
+   * No authenticated session.
+   *
+   * IMPORTANT:
+   * Never fall back to a fixed phone number such as
+   * dev:9848012345. Doing that makes every unauthenticated
+   * request look like the same development user.
+   *
+   * Public endpoints can still be called without a token.
+   * Protected endpoints will correctly receive HTTP 401.
+   */
+  console.warn(
+    '[API AUTH] No authenticated session/token found.',
+  );
+
+  return undefined;
 }
 
 /**
@@ -358,14 +424,16 @@ async function request<T>(
   /**
    * Authentication
    */
-  const token =
-    await getAuthToken();
+ const token = await getAuthToken();
 
-  if (token) {
-    headers.Authorization =
-      `Bearer ${token}`;
-  }
+console.log('========== AUTH DEBUG ==========');
+console.log('[API] Token:', token);
+console.log('[API] URL:', url);
+console.log('================================');
 
+if (token) {
+  headers.Authorization = `Bearer ${token}`;
+}
   /**
    * Abort controller
    */

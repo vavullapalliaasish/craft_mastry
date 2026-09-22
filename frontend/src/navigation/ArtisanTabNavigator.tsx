@@ -18,9 +18,8 @@ import { CatalogScreen } from '../screens/artisan/CatalogScreen';
 import { UploadScreen } from '../screens/artisan/UploadScreen';
 import { MessagesScreen } from '../screens/artisan/MessagesScreen';
 import { ProfileScreen } from '../screens/artisan/ProfileScreen';
-
-import {
-  PALETTE,
+import { OrdersScreen } from '../screens/artisan/OrdersScreen';
+ import{ PALETTE,
   RADIUS,
   TOUCH_TARGET,
 } from '../theme/tokens';
@@ -29,6 +28,7 @@ export type ArtisanTabParamList = {
   Dashboard: undefined;
   Catalog: undefined;
   UploadWizard: undefined;
+  Orders: undefined;
   Messages: undefined;
   Profile: undefined;
 };
@@ -125,6 +125,10 @@ export const ArtisanTabNavigator: React.FC<Props> = ({
               </View>
             );
           }
+          if (route.name === 'Orders')
+  iconName = focused
+    ? 'receipt'
+    : 'receipt-outline';
 
           if (
             route.name ===
@@ -191,6 +195,10 @@ export const ArtisanTabNavigator: React.FC<Props> = ({
           tabBarLabel: 'Add Product',
         }}
       />
+      <Tab.Screen
+  name="Orders"
+  component={OrdersScreen}
+/>
 
       {/* Messages */}
       <Tab.Screen

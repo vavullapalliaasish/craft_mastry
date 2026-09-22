@@ -9,6 +9,7 @@ import { AuthAdapter } from '../../adapters/auth';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { DEMO_MODE, isDemoProduct, productBelongsToUser } from '../../config/demo';
 import { Card } from '../../components/ui/Card';
+import { BackHeader } from '../../components/ui/BackHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { SectionHeader } from '../../components/ui/SectionHeader';
@@ -184,6 +185,10 @@ export const CatalogScreen: React.FC<Props> = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+       <BackHeader
+      title="My Products"
+      navigation={navigation}
+    />
       <FlatList
         style={styles.list}
         data={products}

@@ -45,6 +45,12 @@ declare global {
 
 // ============================================================
 // Development accounts
+//
+// These are only special demo accounts.
+//
+// IMPORTANT:
+// Any other valid 10-digit phone number is also accepted.
+// Unknown development users default to ARTISAN.
 // ============================================================
 
 const DEV_ACCOUNTS: Record<
@@ -90,42 +96,74 @@ function normalizePhone(
 // ============================================================
 // Development authentication
 //
-// Your current frontend auth.ts creates tokens like:
+// Frontend creates:
 //
 //     dev:9848012345
-//
 //     dev:9820044556
+//     dev:9876543210
+//     dev:9123456789
 //
-// We recognize those tokens here before trying Firebase.
+// IMPORTANT:
+//
+// Any valid 10-digit phone number is accepted.
+//
+// Known accounts keep their configured role.
+// Unknown accounts become ARTISAN in development.
 // ============================================================
 
 function getDevelopmentIdentity(
   token: string,
 ): AuthIdentity | null {
 
-  /*
-   * Only accept the exact development-token format.
+  /**
+   * Accept only:
+   *
+   * dev:<exactly 10 digits>
    */
   const match =
-    /^dev:([0-9]{10})$/.exec(token);
+    /^dev:([0-9]{10})$/.exec(
+      token.trim(),
+    );
 
   if (!match) {
     return null;
   }
 
-  const phone = match[1];
+  const phone =
+    normalizePhone(match[1]);
 
-  const account =
-    DEV_ACCOUNTS[phone];
-
-  if (!account) {
+  if (!/^\d{10}$/.test(phone)) {
     return null;
   }
 
+  /**
+   * Check predefined demo account.
+   *
+   * If found, use its role.
+   */
+  const account =
+    DEV_ACCOUNTS[phone];
+
+  /**
+   * IMPORTANT:
+   *
+   * If the phone number is NOT in
+   * DEV_ACCOUNTS, do NOT reject it.
+   *
+   * Instead create a development
+   * ARTISAN identity.
+   */
+  const role: Exclude<UserRole, 'ADMIN'> =
+    account?.role ||
+    'ARTISAN';
+
   return {
-    uid: `dev-uid-${phone}`,
+    uid:
+      `dev-uid-${phone}`,
+
     phone,
-    role: account.role,
+
+    role,
   };
 }
 
@@ -136,8 +174,9 @@ function getDevelopmentIdentity(
 
 function getFirebaseAdminAuth() {
 
-  /*
-   * Firebase Admin should only be initialized once.
+  /**
+   * Firebase Admin should only be
+   * initialized once.
    */
   if (getApps().length === 0) {
 
@@ -149,10 +188,13 @@ function getFirebaseAdminAuth() {
       try {
 
         const serviceAccount =
-          JSON.parse(serviceAccountJson);
+          JSON.parse(
+            serviceAccountJson,
+          );
 
         initializeApp({
-          credential: cert(serviceAccount),
+          credential:
+            cert(serviceAccount),
         });
 
       } catch (error) {
@@ -169,12 +211,13 @@ function getFirebaseAdminAuth() {
 
     } else {
 
-      /*
-       * This is used when Firebase Admin credentials
-       * are available through the environment.
+      /**
+       * Use Firebase credentials
+       * supplied through environment.
        */
       initializeApp({
-        credential: applicationDefault(),
+        credential:
+          applicationDefault(),
       });
     }
   }
@@ -198,7 +241,7 @@ function getBearerToken(
     return null;
   }
 
-  /*
+  /**
    * Accept:
    *
    * Authorization: Bearer TOKEN
@@ -240,7 +283,8 @@ export async function requireAuth(
   if (!token) {
 
     return res.status(401).json({
-      error: 'Authentication required',
+      error:
+        'Authentication required',
     });
   }
 
@@ -249,11 +293,17 @@ export async function requireAuth(
   // DEVELOPMENT AUTH
   //
   // IMPORTANT:
-  // Development tokens are checked BEFORE Firebase.
   //
-  // This fixes:
+  // Check development token BEFORE
+  // Firebase authentication.
   //
-  // 401 Invalid or expired authentication token
+  // This allows:
+  //
+  // dev:9848012345
+  // dev:9876543210
+  // dev:9123456789
+  //
+  // etc.
   // ----------------------------------------------------------
 
   const developmentIdentity =
@@ -264,6 +314,20 @@ export async function requireAuth(
     req.auth =
       developmentIdentity;
 
+    console.log(
+      '[DEV AUTH] Authenticated:',
+      {
+        uid:
+          developmentIdentity.uid,
+
+        phone:
+          developmentIdentity.phone,
+
+        role:
+          developmentIdentity.role,
+      },
+    );
+
     return next();
   }
 
@@ -271,7 +335,7 @@ export async function requireAuth(
   // ----------------------------------------------------------
   // Firebase authentication
   //
-  // If the token is not a development token,
+  // If it is not a development token,
   // treat it as a real Firebase ID token.
   // ----------------------------------------------------------
 
@@ -316,8 +380,11 @@ export async function requireAuth(
     // --------------------------------------------------------
 
     req.auth = {
-      uid: decoded.uid,
+      uid:
+        decoded.uid,
+
       phone,
+
       role,
     };
 

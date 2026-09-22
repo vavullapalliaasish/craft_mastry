@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { BackHeader } from '../../components/ui/BackHeader';
 import {
   ActivityIndicator,
   Alert,
@@ -313,6 +314,10 @@ export const UploadScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <BackHeader
+  title="Add Craft"
+  navigation={navigation}
+/>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.container}

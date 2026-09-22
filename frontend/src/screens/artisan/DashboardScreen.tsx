@@ -667,135 +667,130 @@ export const DashboardScreen: React.FC<
   */
 
   const Sidebar = () => {
-    if (!isDesktop) {
-      return null;
-    }
+  if (!isDesktop) {
+    return null;
+  }
 
-    return (
-      <View style={styles.sidebar}>
-        <View style={styles.sidebarHeader}>
-          <Image
-            source={CRAFT_MASTERY_LOGO}
-            style={styles.brandLogo}
-            resizeMode="contain"
-          />
-        </View>
+  return (
+    <View style={styles.sidebar}>
+      {/* SIDEBAR HEADER */}
+      <View style={styles.sidebarHeader}>
+        <Image
+          source={CRAFT_MASTERY_LOGO}
+          style={styles.brandLogo}
+          resizeMode="contain"
+        />
+      </View>
 
-        <View style={styles.sidebarMenu}>
-          <SidebarItem
-            icon="home"
-            label="Dashboard"
-            active
-            collapsed={false}
-            onPress={() =>
-              goTo('Dashboard')
-            }
-          />
+      {/* SIDEBAR MENU */}
+      <View style={styles.sidebarMenu}>
 
-          <SidebarItem
-            icon="grid-outline"
-            label="My Products"
-            collapsed={false}
-            onPress={() =>
-              goTo('Catalog')
-            }
-          />
+        {/* Dashboard */}
+        <SidebarItem
+          icon="home"
+          label="Dashboard"
+          active
+          collapsed={false}
+          onPress={() => goTo('Dashboard')}
+        />
 
-          <SidebarItem
-            icon="add-circle-outline"
-            label="Add Product"
-            collapsed={false}
-            onPress={() =>
-              goTo('UploadWizard')
-            }
-          />
+        {/* My Products */}
+        <SidebarItem
+          icon="grid-outline"
+          label="My Products"
+          collapsed={false}
+          onPress={() => goTo('Catalog')}
+        />
 
-          <SidebarItem
-            icon="cart-outline"
-            label="Orders"
-            collapsed={false}
-            onPress={() => {}}
-          />
+        {/* Add Product */}
+        <SidebarItem
+          icon="add-circle-outline"
+          label="Add Product"
+          collapsed={false}
+          onPress={() => goTo('UploadWizard')}
+        />
 
-          <SidebarItem
-            icon="globe-outline"
-            label="ONDC"
-            collapsed={false}
-            onPress={() =>
-              Linking.openURL(
-                'https://ondc.org/',
-              )
-            }
-          />
+        {/* Orders */}
+        <SidebarItem
+          icon="cart-outline"
+          label="Orders"
+          collapsed={false}
+          onPress={() => goTo('Orders')}
+        />
 
-          <SidebarItem
-            icon="business-outline"
-            label="GeM"
-            collapsed={false}
-            onPress={() =>
-              Linking.openURL(
-                'https://gem.gov.in/',
-              )
-            }
-          />
+        {/* ONDC */}
+        <SidebarItem
+          icon="globe-outline"
+          label="ONDC"
+          collapsed={false}
+          onPress={() => {
+            Linking.openURL('https://ondc.org/');
+          }}
+        />
 
-          <SidebarItem
-            icon="chatbubble-outline"
-            label="Messages"
-            badge={
-              inquiriesCount ||
-              3
-            }
-            collapsed={false}
-            onPress={() =>
-              goTo('Messages')
-            }
-          />
+        {/* GeM */}
+        <SidebarItem
+          icon="business-outline"
+          label="GeM"
+          collapsed={false}
+          onPress={() => {
+            Linking.openURL('https://gem.gov.in/');
+          }}
+        />
 
-          <SidebarItem
-            icon="bar-chart-outline"
-            label="Analytics"
-            collapsed={false}
-            onPress={() => {}}
-          />
+        {/* Messages */}
+        <SidebarItem
+          icon="chatbubble-outline"
+          label="Messages"
+          badge={inquiriesCount || 3}
+          collapsed={false}
+          onPress={() => goTo('Messages')}
+        />
 
-          <SidebarItem
-            icon="person-outline"
-            label="Profile"
-            collapsed={false}
-            onPress={() =>
-              goTo('Profile')
-            }
-          />
+        {/* Analytics */}
+        <SidebarItem
+          icon="bar-chart-outline"
+          label="Analytics"
+          collapsed={false}
+          onPress={() => {}}
+        />
 
-          <SidebarItem
-            icon="settings-outline"
-            label="Settings"
-            collapsed={false}
-            onPress={() =>
-              goTo('Profile')
-            }
-          />
-        </View>
+        {/* Profile */}
+        <SidebarItem
+          icon="person-outline"
+          label="Profile"
+          collapsed={false}
+          onPress={() => goTo('Profile')}
+        />
 
-        <View style={styles.sidebarQuote}>
-          <Image
-            source={SIDEBAR_ART_IMAGE}
-            style={styles.sidebarArt}
-            resizeMode="contain"
-          />
+        {/* Settings */}
+        <SidebarItem
+          icon="settings-outline"
+          label="Settings"
+          collapsed={false}
+          onPress={() => goTo('Profile')}
+        />
+      </View>
 
-          <View style={styles.quoteWrap}>
-            <Text style={styles.quoteText}>
-              {'“Empowering\n'}
-              {'Artisans\n'}
-              {'Enriching Lives”'}
-            </Text>
-          </View>
+      {/* SIDEBAR QUOTE */}
+      <View style={styles.sidebarQuote}>
+        <Image
+          source={SIDEBAR_ART_IMAGE}
+          style={styles.sidebarArt}
+          resizeMode="contain"
+        />
+
+        <View style={styles.quoteWrap}>
+          <Text style={styles.quoteText}>
+            {'“Empowering\n'}
+            {'Artisans\n'}
+            {'Enriching Lives”'}
+          </Text>
         </View>
       </View>
-    );
-  };
+    </View>
+  );
+};
 
   /*
   |--------------------------------------------------------------------------
@@ -1647,6 +1642,7 @@ export const DashboardScreen: React.FC<
             goTo('Catalog')
           }
         />
+        
 
         <QuickAction
           icon="chatbubble-outline"

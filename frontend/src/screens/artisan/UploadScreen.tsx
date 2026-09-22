@@ -10,9 +10,8 @@ import {
 } from 'react-native';
 import {
   AudioModule,
-  RecordingPresets,
   setAudioModeAsync,
-  useAudioRecorder,
+  useAudioStream,
 } from 'expo-audio';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,6 +26,7 @@ import { Button } from '../../components/ui/Button';
 import { TextField } from '../../components/ui/TextField';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { SpeechAdapter } from '../../adapters/speech';
+import { useNavigation } from '@react-navigation/native';
 
 const STEPS = ['Photo', 'AI enhance', 'Describe', 'AI draft'];
 
@@ -157,10 +157,15 @@ const ExtractionResult: React.FC<{
 };
 
 export const UploadScreen: React.FC = () => {
+  const navigation = useNavigation();
   const { t, lang } = useLanguage();
 
   const [selectedImage, setSelectedImage] = useState<PickedImageResult | null>(null);
 
+  const socketRef = useRef<WebSocket | null>(null);
+  const isRecordingRef = useRef(false);
+  const finalTranscriptRef = useRef('');
+  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [enhancedImageUri, setEnhancedImageUri] = useState('');
   const [enhancementProvider, setEnhancementProvider] = useState('');
@@ -171,24 +176,44 @@ export const UploadScreen: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeakingDescription, setIsSpeakingDescription] = useState(false);
 
-  // Recorded-audio transcription:
-  // Expo records the voice locally, then SpeechAdapter uploads the
-  // completed audio file to /api/speech-to-text, where the backend
-  // sends it to Groq Whisper.
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const isRecordingRef = useRef(false);
+  const liveSpeechUrl = useMemo(() => {
+    const explicit = process.env.EXPO_PUBLIC_LIVE_SPEECH_URL?.trim();
+    if (explicit) return explicit;
+
+    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'http://localhost:3000';
+    const normalized = apiBase.replace(/\/$/, '');
+    return normalized.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:') + '/live-speech';
+  }, []);
+
+  const audioStream = useAudioStream({
+    sampleRate: 16000,
+    channels: 1,
+    encoding: 'int16',
+    onBuffer: ({ data }) => {
+      const socket = socketRef.current;
+      if (!isRecordingRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
+      try {
+        socket.send(data);
+      } catch (error) {
+        console.warn('[Upload voice] Could not send audio buffer:', error);
+      }
+    },
+  });
 
   useEffect(() => {
     return () => {
+      if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
       isRecordingRef.current = false;
       try {
-        audioRecorder.stop();
-      } catch {
-        // Recorder may already be stopped/unavailable during unmount.
-      }
+        socketRef.current?.send(JSON.stringify({ type: 'close' }));
+      } catch {}
+      try {
+        socketRef.current?.close();
+      } catch {}
+      socketRef.current = null;
       SpeechAdapter.stop().catch(() => {});
     };
-  }, [audioRecorder]);
+  }, []);
 
   const handleSelectImage = async (result: PickedImageResult) => {
     if (!result.uri) return;
@@ -258,27 +283,33 @@ export const UploadScreen: React.FC = () => {
   };
 
   const handleVoiceInput = async () => {
-    // STOP + TRANSCRIBE
     if (isRecordingRef.current) {
+      // Stop capture first. Deepgram receives a Finalize message below.
       isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(true);
 
       try {
-        await audioRecorder.stop();
+        await audioStream.stream.stop();
 
-        const audioUri = audioRecorder.uri;
+        const socket = socketRef.current;
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'finalize' }));
 
-        if (!audioUri) {
-          throw new Error('No recorded audio was created. Please try again.');
+          // Give Deepgram a moment to return the final transcript.
+          await new Promise<void>((resolve) => {
+            stopTimerRef.current = setTimeout(resolve, 900);
+          });
+
+          try {
+            socket.send(JSON.stringify({ type: 'close' }));
+          } catch {}
+          socket.close();
         }
 
-        console.log('[Upload voice] Recorded audio:', audioUri);
+        socketRef.current = null;
 
-        const result = await ApiAdapter.transcribeAudio(audioUri, lang);
-
-        const transcript = result?.transcript?.trim();
-
+        const transcript = finalTranscriptRef.current.trim();
         if (!transcript) {
           Alert.alert(
             'No speech detected',
@@ -289,22 +320,24 @@ export const UploadScreen: React.FC = () => {
 
         setVoiceNote(transcript);
       } catch (err: any) {
-        console.error('[Upload voice] transcription error:', err);
+        console.error('[Upload voice] stop error:', err);
         Alert.alert(
           'Voice input failed',
-          err?.message || 'Could not transcribe your voice. Please try again.',
+          err?.message || 'Could not stop or transcribe your voice.',
         );
       } finally {
+        if (stopTimerRef.current) {
+          clearTimeout(stopTimerRef.current);
+          stopTimerRef.current = null;
+        }
         setIsProcessing(false);
       }
 
       return;
     }
 
-    // START RECORDING
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
-
       if (!permission.granted) {
         Alert.alert(
           'Microphone permission',
@@ -318,30 +351,103 @@ export const UploadScreen: React.FC = () => {
         allowsRecording: true,
       });
 
+      finalTranscriptRef.current = '';
       setVoiceNote('');
-      setExtractionResult(null);
-      setIsProcessing(false);
+      setIsProcessing(true);
 
-      await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
+      const socket = new WebSocket(liveSpeechUrl);
+      socketRef.current = socket;
 
-      isRecordingRef.current = true;
-      setIsRecording(true);
+      socket.onopen = async () => {
+        try {
+          socket.send(
+            JSON.stringify({
+              type: 'config',
+              language: lang,
+              sampleRate: 16000,
+              channels: 1,
+            }),
+          );
+        } catch (error: any) {
+          console.error('[Upload voice] WebSocket config error:', error);
+          setIsProcessing(false);
+          isRecordingRef.current = false;
+          setIsRecording(false);
+          Alert.alert('Voice input failed', 'Could not configure live transcription.');
+        }
+      };
 
-      console.log('[Upload voice] Recording started');
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          if (message.type === 'ready') {
+            isRecordingRef.current = true;
+            setIsRecording(true);
+            setIsProcessing(false);
+            audioStream.stream.start();
+            return;
+          }
+
+          if (message.type === 'transcript') {
+            const transcript = String(message.transcript || '').trim();
+            if (!transcript) return;
+
+            if (message.isFinal) {
+              finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim();
+              setVoiceNote(finalTranscriptRef.current);
+            } else {
+              const preview = `${finalTranscriptRef.current} ${transcript}`.trim();
+              setVoiceNote(preview);
+            }
+            return;
+          }
+
+          if (message.type === 'error') {
+            console.error('[Upload voice] Deepgram error:', message.error, message.details);
+            isRecordingRef.current = false;
+            setIsRecording(false);
+            setIsProcessing(false);
+            Alert.alert(
+              'Voice input failed',
+              message.error || 'Live transcription failed.',
+            );
+            try {
+              socket.close();
+            } catch {}
+          }
+        } catch (error) {
+          console.warn('[Upload voice] Invalid WebSocket message:', error);
+        }
+      };
+
+      socket.onerror = (event) => {
+        console.error('[Upload voice] WebSocket error:', event);
+        isRecordingRef.current = false;
+        setIsRecording(false);
+        setIsProcessing(false);
+        Alert.alert(
+          'Voice input failed',
+          'Could not connect to the live speech service. Check that the backend is running and the phone is on the same Wi-Fi.',
+        );
+      };
+
+      socket.onclose = () => {
+        if (socketRef.current === socket) {
+          socketRef.current = null;
+        }
+      };
     } catch (err: any) {
-      console.error('[Upload voice] start recording error:', err);
+      console.error('[Upload voice] start error:', err);
       isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(false);
-
       Alert.alert(
         'Voice input failed',
-        err?.message || 'Could not start microphone recording.',
+        err?.message || 'Could not start live voice input.',
       );
     }
   };
-
   const currentIndex = useMemo(() => {
     if (!selectedImage) return 0;
     if (isEnhancing) return 1;
@@ -351,6 +457,15 @@ export const UploadScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <View style={styles.topBar}>
+  <Pressable
+    onPress={() => navigation.navigate('Dashboard' as never)}
+    style={styles.backButton}
+  >
+    <Ionicons name="arrow-back" size={24} color={PALETTE.primary} />
+    <Text style={styles.backText}>Back</Text>
+  </Pressable>
+</View>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.container}
@@ -573,6 +688,24 @@ const SectionTitle: React.FC<{ number: string; title: string }> = ({ number, tit
 );
 
 const styles = StyleSheet.create({
+  topBar: {
+  marginBottom: SPACING.md,
+},
+
+backButton: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  alignSelf: 'flex-start',
+  paddingVertical: 8,
+  paddingHorizontal: 4,
+},
+
+backText: {
+  marginLeft: 6,
+  fontSize: 15,
+  fontWeight: '600',
+  color: PALETTE.primary,
+},
   safeArea: {
     flex: 1,
     backgroundColor: PALETTE.background,
