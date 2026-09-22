@@ -45,6 +45,7 @@ const GET_CACHE_TTL_MS = 30_000;
 const CACHEABLE_GETS = new Set([
   '/products',
   '/inquiries',
+  '/orders',
 ]);
 
 interface RequestOptions extends RequestInit {
@@ -206,13 +207,12 @@ function getDefaultApiBaseUrl(): string {
 /**
  * Main API URL
  */
-export const API_BASE_URL =
-  getDefaultApiBaseUrl();
-
-console.log(
-  '[API] Base URL:',
-  API_BASE_URL
-);
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim()
+    ? process.env.EXPO_PUBLIC_API_BASE_URL.trim().replace(/\/+$/, '')
+    : Platform.OS === 'android'
+      ? 'http://10.0.2.2:3000/api'
+      : 'http://localhost:3000/api';
 
 /**
  * Get Authentication Token
@@ -674,6 +674,35 @@ export const ApiAdapter = {
           JSON.stringify(
             replyData
           ),
+      }
+    );
+  },
+
+  // ---------------------------------
+  // Real Orders
+  // ---------------------------------
+
+  async getOrders(
+    forceRefresh = false
+  ): Promise<any[]> {
+    const data = await request<any>(
+      '/orders',
+      { forceRefresh }
+    );
+    return Array.isArray(data)
+      ? data
+      : data?.orders || [];
+  },
+
+  async updateOrderStatus(
+    orderId: string,
+    status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'SHIPPED' | 'DELIVERED'
+  ): Promise<any> {
+    return request(
+      `/orders/${encodeURIComponent(orderId)}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
       }
     );
   },

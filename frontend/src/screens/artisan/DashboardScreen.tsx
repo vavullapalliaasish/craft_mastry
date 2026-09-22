@@ -8,6 +8,7 @@ import {
   Alert,
   Image,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { ApiAdapter } from '../../adapters/api';
 import { AuthAdapter } from '../../adapters/auth';
+import { useLanguage } from '../../i18n/LanguageContext';
 
 import {
   DEMO_MODE,
@@ -339,11 +341,688 @@ const SidebarItem: React.FC<
 |--------------------------------------------------------------------------
 */
 
+const LANGUAGE_OPTIONS = [
+  { code: 'en', name: 'English' },
+  { code: 'te', name: 'తెలుగు' },
+  { code: 'hi', name: 'हिन्दी' },
+  { code: 'ta', name: 'தமிழ்' },
+  { code: 'kn', name: 'ಕನ್ನಡ' },
+  { code: 'mr', name: 'मराठी' },
+  { code: 'bn', name: 'বাংলা' },
+  { code: 'ml', name: 'മലയാളം' },
+  { code: 'gu', name: 'ગુજરાતી' },
+  { code: 'pa', name: 'ਪੰਜਾਬੀ' },
+  { code: 'or', name: 'ଓଡ଼ିଆ' },
+  { code: 'as', name: 'অসমীয়া' },
+  { code: 'ur', name: 'اردو' },
+] as const;
+
+const LANGUAGE_NAMES: Record<string, string> = Object.fromEntries(
+  LANGUAGE_OPTIONS.map((item) => [item.code, item.name]),
+);
+
+const DASHBOARD_TEXT: Record<string, Record<string, string>> = {
+  en: {
+    dashboard: 'Dashboard',
+    myProducts: 'My Products',
+    addProduct: 'Add Product',
+    orders: 'Orders',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'Messages',
+    analytics: 'Analytics',
+    profile: 'Profile',
+    settings: 'Settings',
+    searchPlaceholder: 'Search products, buyers, or opportunities...',
+    changeLanguage: 'Change language',
+    close: 'Close',
+    selectLanguage: 'Select Language',
+    languageSubtitle: 'Choose the language you want to use in Craft Mastery.',
+    greeting: 'Namaskaram, {name}!',
+    artisan: 'Artisan',
+    dashboardSubtitle: 'Your handmade craft workshop overview.',
+    heroTitle: 'Speak it. Snap it. Sell it.',
+    heroSubtitle: 'Turn a photo and a spoken description into a new craft listing — in your language.',
+    addNewCraft: 'Add New Craft Listing',
+    activeListings: 'Active Listings',
+    buyerInquiries: 'Buyer Inquiries',
+    trendMonth: '+3 this month',
+    needsAttention: 'Needs attention',
+    reachOndc: 'Reach customers across India through the ONDC network.',
+    connectOndc: 'Connect to ONDC',
+    gemDescription: 'List your products for Government buyers.',
+    exploreGem: 'Explore GeM',
+    demo: 'DEMO',
+    listen: 'Listen',
+    edit: 'Edit',
+    productActions: 'Product actions',
+    noVoice: 'This product does not have a saved voice description yet.',
+    audioUnavailable: 'Audio unavailable',
+    audioUnavailableText: 'Could not open the product audio.',
+    myProductsTitle: 'My Products',
+    viewAll: 'View All',
+    loading: 'Loading your crafts...',
+    keepCreating: 'Keep Creating',
+    creativeText: 'Your crafts make the world more beautiful.',
+    craftVoice: 'Craft Voice Assistant',
+    craftVoiceText: 'Use the microphone assistant to describe your craft.',
+    ordersReceived: 'Orders Received',
+    shopRating: 'Shop Rating',
+    trendWeek: '+2 this week',
+    excellent: 'Excellent',
+  },
+  te: {
+    dashboard: 'డ్యాష్‌బోర్డ్',
+    myProducts: 'నా ఉత్పత్తులు',
+    addProduct: 'ఉత్పత్తిని జోడించండి',
+    orders: 'ఆర్డర్లు',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'సందేశాలు',
+    analytics: 'విశ్లేషణలు',
+    profile: 'ప్రొఫైల్',
+    settings: 'సెట్టింగ్స్',
+    searchPlaceholder: 'ఉత్పత్తులు, కొనుగోలుదారులు లేదా అవకాశాలను వెతకండి...',
+    changeLanguage: 'భాషను మార్చండి',
+    close: 'మూసివేయండి',
+    selectLanguage: 'భాషను ఎంచుకోండి',
+    languageSubtitle: 'Craft Masteryలో ఉపయోగించాలనుకునే భాషను ఎంచుకోండి.',
+    greeting: 'నమస్కారం, {name}!',
+    artisan: 'కళాకారుడు',
+    dashboardSubtitle: 'మీ చేతిపనుల వర్క్‌షాప్ అవలోకనం.',
+    heroTitle: 'మాట్లాడండి. ఫోటో తీయండి. అమ్మండి.',
+    heroSubtitle: 'మీ భాషలో ఫోటో మరియు వాయిస్ వివరణతో కొత్త క్రాఫ్ట్ లిస్టింగ్‌ను రూపొందించండి.',
+    addNewCraft: 'కొత్త క్రాఫ్ట్ లిస్టింగ్ జోడించండి',
+    activeListings: 'యాక్టివ్ లిస్టింగ్స్',
+    buyerInquiries: 'కొనుగోలుదారుల ప్రశ్నలు',
+    trendMonth: 'ఈ నెల +3',
+    needsAttention: 'శ్రద్ధ అవసరం',
+    reachOndc: 'ONDC నెట్‌వర్క్ ద్వారా భారతదేశం అంతటా వినియోగదారులను చేరుకోండి.',
+    connectOndc: 'ONDCకి కనెక్ట్ అవ్వండి',
+    gemDescription: 'ప్రభుత్వ కొనుగోలుదారుల కోసం మీ ఉత్పత్తులను లిస్ట్ చేయండి.',
+    exploreGem: 'GeM చూడండి',
+    demo: 'డెమో',
+    listen: 'వినండి',
+    edit: 'ఎడిట్',
+    productActions: 'ఉత్పత్తి చర్యలు',
+    noVoice: 'ఈ ఉత్పత్తికి ఇంకా వాయిస్ వివరణ సేవ్ చేయలేదు.',
+    audioUnavailable: 'ఆడియో అందుబాటులో లేదు',
+    audioUnavailableText: 'ఉత్పత్తి ఆడియోను తెరవలేకపోయాము.',
+    myProductsTitle: 'నా ఉత్పత్తులు',
+    viewAll: 'అన్నీ చూడండి',
+    loading: 'మీ క్రాఫ్ట్‌లను లోడ్ చేస్తోంది...',
+    keepCreating: 'సృష్టిస్తూ ఉండండి',
+    creativeText: 'మీ క్రాఫ్ట్‌లు ప్రపంచాన్ని మరింత అందంగా మారుస్తాయి.',
+    craftVoice: 'క్రాఫ్ట్ వాయిస్ అసిస్టెంట్',
+    craftVoiceText: 'మీ క్రాఫ్ట్‌ను వివరించడానికి మైక్రోఫోన్ అసిస్టెంట్‌ను ఉపయోగించండి.',
+    ordersReceived: 'అందుకున్న ఆర్డర్లు',
+    shopRating: 'షాప్ రేటింగ్',
+    trendWeek: 'ఈ వారం +2',
+    excellent: 'అద్భుతం',
+  },
+  hi: {
+    dashboard: 'डैशबोर्ड',
+    myProducts: 'मेरे उत्पाद',
+    addProduct: 'उत्पाद जोड़ें',
+    orders: 'ऑर्डर',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'संदेश',
+    analytics: 'विश्लेषण',
+    profile: 'प्रोफ़ाइल',
+    settings: 'सेटिंग्स',
+    searchPlaceholder: 'उत्पाद, खरीदार या अवसर खोजें...',
+    changeLanguage: 'भाषा बदलें',
+    close: 'बंद करें',
+    selectLanguage: 'भाषा चुनें',
+    languageSubtitle: 'Craft Mastery में उपयोग करने के लिए भाषा चुनें।',
+    greeting: 'नमस्कार, {name}!',
+    artisan: 'कारीगर',
+    dashboardSubtitle: 'आपकी हस्तनिर्मित कला कार्यशाला का अवलोकन।',
+    heroTitle: 'बोलिए। फोटो लीजिए। बेचिए।',
+    heroSubtitle: 'अपनी भाषा में फोटो और आवाज़ के विवरण से नई क्राफ्ट लिस्टिंग बनाएं।',
+    addNewCraft: 'नई क्राफ्ट लिस्टिंग जोड़ें',
+    activeListings: 'सक्रिय लिस्टिंग',
+    buyerInquiries: 'खरीदारों की पूछताछ',
+    trendMonth: 'इस महीने +3',
+    needsAttention: 'ध्यान देने की आवश्यकता',
+    reachOndc: 'ONDC नेटवर्क के माध्यम से पूरे भारत में ग्राहकों तक पहुँचें।',
+    connectOndc: 'ONDC से जुड़ें',
+    gemDescription: 'सरकारी खरीदारों के लिए अपने उत्पाद सूचीबद्ध करें।',
+    exploreGem: 'GeM देखें',
+    demo: 'डेमो',
+    listen: 'सुनें',
+    edit: 'संपादित करें',
+    productActions: 'उत्पाद क्रियाएँ',
+    noVoice: 'इस उत्पाद का वॉयस विवरण अभी सेव नहीं है।',
+    audioUnavailable: 'ऑडियो उपलब्ध नहीं',
+    audioUnavailableText: 'उत्पाद ऑडियो नहीं खोल सके।',
+    myProductsTitle: 'मेरे उत्पाद',
+    viewAll: 'सभी देखें',
+    loading: 'आपकी क्राफ्ट लोड हो रही हैं...',
+    keepCreating: 'बनाते रहें',
+    creativeText: 'आपकी क्राफ्ट दुनिया को और सुंदर बनाती हैं।',
+    craftVoice: 'क्राफ्ट वॉयस असिस्टेंट',
+    craftVoiceText: 'अपनी क्राफ्ट का वर्णन करने के लिए माइक्रोफ़ोन असिस्टेंट का उपयोग करें।',
+    ordersReceived: 'प्राप्त ऑर्डर',
+    shopRating: 'दुकान की रेटिंग',
+    trendWeek: 'इस सप्ताह +2',
+    excellent: 'उत्कृष्ट',
+  },
+  ta: {
+    dashboard: 'டாஷ்போர்டு',
+    myProducts: 'என் தயாரிப்புகள்',
+    addProduct: 'தயாரிப்பைச் சேர்க்கவும்',
+    orders: 'ஆர்டர்கள்',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'செய்திகள்',
+    analytics: 'பகுப்பாய்வு',
+    profile: 'சுயவிவரம்',
+    settings: 'அமைப்புகள்',
+    searchPlaceholder: 'தயாரிப்புகள், வாங்குபவர்கள் அல்லது வாய்ப்புகளைத் தேடுங்கள்...',
+    changeLanguage: 'மொழியை மாற்றவும்',
+    close: 'மூடவும்',
+    selectLanguage: 'மொழியைத் தேர்ந்தெடுக்கவும்',
+    languageSubtitle: 'Craft Masteryல் பயன்படுத்த விரும்பும் மொழியைத் தேர்ந்தெடுக்கவும்.',
+    greeting: 'வணக்கம், {name}!',
+    artisan: 'கைவினைஞர்',
+    dashboardSubtitle: 'உங்கள் கைவினைப் பணிமனை கண்ணோட்டம்.',
+    heroTitle: 'பேசுங்கள். படம் எடுங்கள். விற்குங்கள்.',
+    heroSubtitle: 'உங்கள் மொழியில் படம் மற்றும் குரல் விளக்கத்துடன் புதிய கைவினைப் பட்டியலை உருவாக்குங்கள்.',
+    addNewCraft: 'புதிய கைவினைப் பட்டியலைச் சேர்க்கவும்',
+    activeListings: 'செயலில் உள்ள பட்டியல்கள்',
+    buyerInquiries: 'வாங்குபவர் விசாரணைகள்',
+    trendMonth: 'இந்த மாதம் +3',
+    needsAttention: 'கவனம் தேவை',
+    reachOndc: 'ONDC மூலம் இந்தியா முழுவதும் வாடிக்கையாளர்களை அடையுங்கள்.',
+    connectOndc: 'ONDC உடன் இணைக்கவும்',
+    gemDescription: 'அரசாங்க வாங்குபவர்களுக்காக உங்கள் தயாரிப்புகளைப் பட்டியலிடுங்கள்.',
+    exploreGem: 'GeM பார்க்கவும்',
+    demo: 'டெமோ',
+    listen: 'கேளுங்கள்',
+    edit: 'திருத்து',
+    productActions: 'தயாரிப்பு செயல்கள்',
+    noVoice: 'இந்த தயாரிப்பிற்கு குரல் விளக்கம் இன்னும் சேமிக்கப்படவில்லை.',
+    audioUnavailable: 'ஆடியோ கிடைக்கவில்லை',
+    audioUnavailableText: 'தயாரிப்பு ஆடியோவைத் திறக்க முடியவில்லை.',
+    myProductsTitle: 'என் தயாரிப்புகள்',
+    viewAll: 'அனைத்தையும் பார்க்கவும்',
+    loading: 'உங்கள் கைவினைகளை ஏற்றுகிறது...',
+    keepCreating: 'தொடர்ந்து உருவாக்குங்கள்',
+    creativeText: 'உங்கள் கைவினைகள் உலகை மேலும் அழகாக்குகின்றன.',
+    craftVoice: 'கிராஃப்ட் குரல் உதவியாளர்',
+    craftVoiceText: 'உங்கள் கைவினையை விவரிக்க மைக்ரோஃபோன் உதவியாளரைப் பயன்படுத்தவும்.',
+    ordersReceived: 'பெறப்பட்ட ஆர்டர்கள்',
+    shopRating: 'கடை மதிப்பீடு',
+    trendWeek: 'இந்த வாரம் +2',
+    excellent: 'சிறப்பு',
+  },
+  kn: {
+    dashboard: 'ಡ್ಯಾಶ್‌ಬೋರ್ಡ್',
+    myProducts: 'ನನ್ನ ಉತ್ಪನ್ನಗಳು',
+    addProduct: 'ಉತ್ಪನ್ನ ಸೇರಿಸಿ',
+    orders: 'ಆರ್ಡರ್‌ಗಳು',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'ಸಂದೇಶಗಳು',
+    analytics: 'ವಿಶ್ಲೇಷಣೆ',
+    profile: 'ಪ್ರೊಫೈಲ್',
+    settings: 'ಸೆಟ್ಟಿಂಗ್ಸ್',
+    searchPlaceholder: 'ಉತ್ಪನ್ನಗಳು, ಖರೀದಿದಾರರು ಅಥವಾ ಅವಕಾಶಗಳನ್ನು ಹುಡುಕಿ...',
+    changeLanguage: 'ಭಾಷೆ ಬದಲಿಸಿ',
+    close: 'ಮುಚ್ಚಿ',
+    selectLanguage: 'ಭಾಷೆ ಆಯ್ಕೆಮಾಡಿ',
+    languageSubtitle: 'Craft Masteryನಲ್ಲಿ ಬಳಸಲು ಬಯಸುವ ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ.',
+    greeting: 'ನಮಸ್ಕಾರ, {name}!',
+    artisan: 'ಕುಶಲಕರ್ಮಿ',
+    dashboardSubtitle: 'ನಿಮ್ಮ ಕೈತೋಟದ ಕಾರ್ಯಾಗಾರದ ಅವಲೋಕನ.',
+    heroTitle: 'ಮಾತನಾಡಿ. ಫೋಟೋ ತೆಗೆಯಿರಿ. ಮಾರಾಟ ಮಾಡಿ.',
+    heroSubtitle: 'ನಿಮ್ಮ ಭಾಷೆಯಲ್ಲಿ ಫೋಟೋ ಮತ್ತು ಧ್ವನಿ ವಿವರಣೆಯಿಂದ ಹೊಸ ಕ್ರಾಫ್ಟ್ ಪಟ್ಟಿಯನ್ನು ರಚಿಸಿ.',
+    addNewCraft: 'ಹೊಸ ಕ್ರಾಫ್ಟ್ ಪಟ್ಟಿಯನ್ನು ಸೇರಿಸಿ',
+    activeListings: 'ಸಕ್ರಿಯ ಪಟ್ಟಿಗಳು',
+    buyerInquiries: 'ಖರೀದಿದಾರರ ವಿಚಾರಣೆಗಳು',
+    trendMonth: 'ಈ ತಿಂಗಳು +3',
+    needsAttention: 'ಗಮನ ಅಗತ್ಯ',
+    reachOndc: 'ONDC ಮೂಲಕ ಭಾರತದಾದ್ಯಂತ ಗ್ರಾಹಕರನ್ನು ತಲುಪಿ.',
+    connectOndc: 'ONDCಗೆ ಸಂಪರ್ಕಿಸಿ',
+    gemDescription: 'ಸರ್ಕಾರಿ ಖರೀದಿದಾರರಿಗಾಗಿ ನಿಮ್ಮ ಉತ್ಪನ್ನಗಳನ್ನು ಪಟ್ಟಿ ಮಾಡಿ.',
+    exploreGem: 'GeM ನೋಡಿ',
+    demo: 'ಡೆಮೊ',
+    listen: 'ಕೇಳಿ',
+    edit: 'ತಿದ್ದು',
+    productActions: 'ಉತ್ಪನ್ನ ಕ್ರಿಯೆಗಳು',
+    noVoice: 'ಈ ಉತ್ಪನ್ನಕ್ಕೆ ಧ್ವನಿ ವಿವರಣೆ ಇನ್ನೂ ಉಳಿಸಲಾಗಿಲ್ಲ.',
+    audioUnavailable: 'ಆಡಿಯೋ ಲಭ್ಯವಿಲ್ಲ',
+    audioUnavailableText: 'ಉತ್ಪನ್ನದ ಆಡಿಯೋ ತೆರೆಯಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ.',
+    myProductsTitle: 'ನನ್ನ ಉತ್ಪನ್ನಗಳು',
+    viewAll: 'ಎಲ್ಲವನ್ನೂ ನೋಡಿ',
+    loading: 'ನಿಮ್ಮ ಕ್ರಾಫ್ಟ್‌ಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ...',
+    keepCreating: 'ಸೃಷ್ಟಿಸುತ್ತಿರಿ',
+    creativeText: 'ನಿಮ್ಮ ಕ್ರಾಫ್ಟ್‌ಗಳು ಜಗತ್ತನ್ನು ಇನ್ನಷ್ಟು ಸುಂದರಗೊಳಿಸುತ್ತವೆ.',
+    craftVoice: 'ಕ್ರಾಫ್ಟ್ ವಾಯ್ಸ್ ಅಸಿಸ್ಟೆಂಟ್',
+    craftVoiceText: 'ನಿಮ್ಮ ಕ್ರಾಫ್ಟ್ ವಿವರಿಸಲು ಮೈಕ್ರೋಫೋನ್ ಸಹಾಯಕವನ್ನು ಬಳಸಿ.',
+    ordersReceived: 'ಸ್ವೀಕರಿಸಿದ ಆರ್ಡರ್‌ಗಳು',
+    shopRating: 'ಅಂಗಡಿ ರೇಟಿಂಗ್',
+    trendWeek: 'ಈ ವಾರ +2',
+    excellent: 'ಅತ್ಯುತ್ತಮ',
+  },
+  mr: {
+    dashboard: 'डॅशबोर्ड',
+    myProducts: 'माझी उत्पादने',
+    addProduct: 'उत्पादन जोडा',
+    orders: 'ऑर्डर्स',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'संदेश',
+    analytics: 'विश्लेषण',
+    profile: 'प्रोफाइल',
+    settings: 'सेटिंग्ज',
+    searchPlaceholder: 'उत्पादने, खरेदीदार किंवा संधी शोधा...',
+    changeLanguage: 'भाषा बदला',
+    close: 'बंद करा',
+    selectLanguage: 'भाषा निवडा',
+    languageSubtitle: 'Craft Mastery मध्ये वापरायची भाषा निवडा.',
+    greeting: 'नमस्कार, {name}!',
+    artisan: 'कारागीर',
+    dashboardSubtitle: 'तुमच्या हस्तकला कार्यशाळेचा आढावा.',
+    heroTitle: 'बोला. फोटो घ्या. विक्री करा.',
+    heroSubtitle: 'तुमच्या भाषेत फोटो आणि आवाजाच्या वर्णनातून नवीन क्राफ्ट लिस्टिंग तयार करा.',
+    addNewCraft: 'नवीन क्राफ्ट लिस्टिंग जोडा',
+    activeListings: 'सक्रिय लिस्टिंग',
+    buyerInquiries: 'खरेदीदारांच्या चौकश्या',
+    trendMonth: 'या महिन्यात +3',
+    needsAttention: 'लक्ष देणे आवश्यक',
+    reachOndc: 'ONDC नेटवर्कद्वारे संपूर्ण भारतातील ग्राहकांपर्यंत पोहोचा.',
+    connectOndc: 'ONDC शी जोडा',
+    gemDescription: 'सरकारी खरेदीदारांसाठी तुमची उत्पादने सूचीबद्ध करा.',
+    exploreGem: 'GeM पहा',
+    demo: 'डेमो',
+    listen: 'ऐका',
+    edit: 'संपादित करा',
+    productActions: 'उत्पादन क्रिया',
+    noVoice: 'या उत्पादनाचे व्हॉइस वर्णन अजून सेव्ह केलेले नाही.',
+    audioUnavailable: 'ऑडिओ उपलब्ध नाही',
+    audioUnavailableText: 'उत्पादन ऑडिओ उघडता आले नाही.',
+    myProductsTitle: 'माझी उत्पादने',
+    viewAll: 'सर्व पहा',
+    loading: 'तुमच्या क्राफ्ट्स लोड होत आहेत...',
+    keepCreating: 'निर्मिती सुरू ठेवा',
+    creativeText: 'तुमच्या क्राफ्ट्समुळे जग अधिक सुंदर होते.',
+    craftVoice: 'क्राफ्ट व्हॉइस असिस्टंट',
+    craftVoiceText: 'तुमच्या क्राफ्टचे वर्णन करण्यासाठी मायक्रोफोन असिस्टंट वापरा.',
+    ordersReceived: 'प्राप्त ऑर्डर्स',
+    shopRating: 'दुकान रेटिंग',
+    trendWeek: 'या आठवड्यात +2',
+    excellent: 'उत्कृष्ट',
+  },
+  bn: {
+    dashboard: 'ড্যাশবোর্ড',
+    myProducts: 'আমার পণ্য',
+    addProduct: 'পণ্য যোগ করুন',
+    orders: 'অর্ডার',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'বার্তা',
+    analytics: 'বিশ্লেষণ',
+    profile: 'প্রোফাইল',
+    settings: 'সেটিংস',
+    searchPlaceholder: 'পণ্য, ক্রেতা বা সুযোগ খুঁজুন...',
+    changeLanguage: 'ভাষা পরিবর্তন করুন',
+    close: 'বন্ধ করুন',
+    selectLanguage: 'ভাষা নির্বাচন করুন',
+    languageSubtitle: 'Craft Mastery-তে ব্যবহার করার জন্য ভাষা নির্বাচন করুন।',
+    greeting: 'নমস্কার, {name}!',
+    artisan: 'কারিগর',
+    dashboardSubtitle: 'আপনার হস্তশিল্প কর্মশালার সংক্ষিপ্ত চিত্র।',
+    heroTitle: 'বলুন। ছবি তুলুন। বিক্রি করুন।',
+    heroSubtitle: 'আপনার ভাষায় ছবি ও কণ্ঠের বর্ণনা দিয়ে নতুন ক্রাফট তালিকা তৈরি করুন।',
+    addNewCraft: 'নতুন ক্রাফট তালিকা যোগ করুন',
+    activeListings: 'সক্রিয় তালিকা',
+    buyerInquiries: 'ক্রেতাদের জিজ্ঞাসা',
+    trendMonth: 'এই মাসে +3',
+    needsAttention: 'মনোযোগ প্রয়োজন',
+    reachOndc: 'ONDC নেটওয়ার্কের মাধ্যমে সারা ভারতের গ্রাহকদের কাছে পৌঁছান।',
+    connectOndc: 'ONDC-তে সংযুক্ত করুন',
+    gemDescription: 'সরকারি ক্রেতাদের জন্য আপনার পণ্য তালিকাভুক্ত করুন।',
+    exploreGem: 'GeM দেখুন',
+    demo: 'ডেমো',
+    listen: 'শুনুন',
+    edit: 'সম্পাদনা',
+    productActions: 'পণ্যের কার্যক্রম',
+    noVoice: 'এই পণ্যের জন্য এখনও কোনো ভয়েস বিবরণ সংরক্ষিত নেই।',
+    audioUnavailable: 'অডিও পাওয়া যাচ্ছে না',
+    audioUnavailableText: 'পণ্যের অডিও খোলা যায়নি।',
+    myProductsTitle: 'আমার পণ্য',
+    viewAll: 'সব দেখুন',
+    loading: 'আপনার ক্রাফট লোড হচ্ছে...',
+    keepCreating: 'তৈরি করতে থাকুন',
+    creativeText: 'আপনার ক্রাফট বিশ্বকে আরও সুন্দর করে।',
+    craftVoice: 'ক্রাফট ভয়েস অ্যাসিস্ট্যান্ট',
+    craftVoiceText: 'আপনার ক্রাফট বর্ণনা করতে মাইক্রোফোন অ্যাসিস্ট্যান্ট ব্যবহার করুন।',
+    ordersReceived: 'প্রাপ্ত অর্ডার',
+    shopRating: 'দোকানের রেটিং',
+    trendWeek: 'এই সপ্তাহে +2',
+    excellent: 'চমৎকার',
+  },
+  ml: {
+    dashboard: 'ഡാഷ്ബോർഡ്',
+    myProducts: 'എന്റെ ഉൽപ്പന്നങ്ങൾ',
+    addProduct: 'ഉൽപ്പന്നം ചേർക്കുക',
+    orders: 'ഓർഡറുകൾ',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'സന്ദേശങ്ങൾ',
+    analytics: 'വിശകലനം',
+    profile: 'പ്രൊഫൈൽ',
+    settings: 'ക്രമീകരണങ്ങൾ',
+    searchPlaceholder: 'ഉൽപ്പന്നങ്ങൾ, വാങ്ങുന്നവർ അല്ലെങ്കിൽ അവസരങ്ങൾ തിരയുക...',
+    changeLanguage: 'ഭാഷ മാറ്റുക',
+    close: 'അടയ്ക്കുക',
+    selectLanguage: 'ഭാഷ തിരഞ്ഞെടുക്കുക',
+    languageSubtitle: 'Craft Masteryയിൽ ഉപയോഗിക്കേണ്ട ഭാഷ തിരഞ്ഞെടുക്കുക.',
+    greeting: 'നമസ്കാരം, {name}!',
+    artisan: 'കരകൗശല വിദഗ്ധൻ',
+    dashboardSubtitle: 'നിങ്ങളുടെ കൈത്തറി വർക്ക്‌ഷോപ്പ് അവലോകനം.',
+    heroTitle: 'പറയൂ. ചിത്രം എടുക്കൂ. വിൽക്കൂ.',
+    heroSubtitle: 'നിങ്ങളുടെ ഭാഷയിൽ ചിത്രവും ശബ്ദ വിവരണവും ഉപയോഗിച്ച് പുതിയ ക്രാഫ്റ്റ് ലിസ്റ്റിംഗ് സൃഷ്ടിക്കുക.',
+    addNewCraft: 'പുതിയ ക്രാഫ്റ്റ് ലിസ്റ്റിംഗ് ചേർക്കുക',
+    activeListings: 'സജീവ ലിസ്റ്റിംഗുകൾ',
+    buyerInquiries: 'വാങ്ങുന്നവരുടെ അന്വേഷണങ്ങൾ',
+    trendMonth: 'ഈ മാസം +3',
+    needsAttention: 'ശ്രദ്ധ ആവശ്യമാണ്',
+    reachOndc: 'ONDC നെറ്റ്‌വർക്ക് വഴി ഇന്ത്യയിലുടനീളമുള്ള ഉപഭോക്താക്കളിലേക്ക് എത്തുക.',
+    connectOndc: 'ONDCയുമായി ബന്ധിപ്പിക്കുക',
+    gemDescription: 'സർക്കാർ വാങ്ങുന്നവർക്കായി നിങ്ങളുടെ ഉൽപ്പന്നങ്ങൾ ലിസ്റ്റ് ചെയ്യുക.',
+    exploreGem: 'GeM കാണുക',
+    demo: 'ഡെമോ',
+    listen: 'കേൾക്കുക',
+    edit: 'തിരുത്തുക',
+    productActions: 'ഉൽപ്പന്ന പ്രവർത്തനങ്ങൾ',
+    noVoice: 'ഈ ഉൽപ്പന്നത്തിന് ശബ്ദ വിവരണം ഇതുവരെ സംരക്ഷിച്ചിട്ടില്ല.',
+    audioUnavailable: 'ഓഡിയോ ലഭ്യമല്ല',
+    audioUnavailableText: 'ഉൽപ്പന്ന ഓഡിയോ തുറക്കാനായില്ല.',
+    myProductsTitle: 'എന്റെ ഉൽപ്പന്നങ്ങൾ',
+    viewAll: 'എല്ലാം കാണുക',
+    loading: 'നിങ്ങളുടെ ക്രാഫ്റ്റുകൾ ലോഡ് ചെയ്യുന്നു...',
+    keepCreating: 'സൃഷ്ടിച്ചുകൊണ്ടിരിക്കുക',
+    creativeText: 'നിങ്ങളുടെ ക്രാഫ്റ്റുകൾ ലോകത്തെ കൂടുതൽ മനോഹരമാക്കുന്നു.',
+    craftVoice: 'ക്രാഫ്റ്റ് വോയ്സ് അസിസ്റ്റന്റ്',
+    craftVoiceText: 'നിങ്ങളുടെ ക്രാഫ്റ്റ് വിവരിക്കാൻ മൈക്രോഫോൺ അസിസ്റ്റന്റ് ഉപയോഗിക്കുക.',
+    ordersReceived: 'ലഭിച്ച ഓർഡറുകൾ',
+    shopRating: 'ഷോപ്പ് റേറ്റിംഗ്',
+    trendWeek: 'ഈ ആഴ്ച +2',
+    excellent: 'മികച്ചത്',
+  },
+  gu: {
+    dashboard: 'ડેશબોર્ડ',
+    myProducts: 'મારા ઉત્પાદનો',
+    addProduct: 'ઉત્પાદન ઉમેરો',
+    orders: 'ઓર્ડર',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'સંદેશા',
+    analytics: 'વિશ્લેષણ',
+    profile: 'પ્રોફાઇલ',
+    settings: 'સેટિંગ્સ',
+    searchPlaceholder: 'ઉત્પાદનો, ખરીદદારો અથવા તકો શોધો...',
+    changeLanguage: 'ભાષા બદલો',
+    close: 'બંધ કરો',
+    selectLanguage: 'ભાષા પસંદ કરો',
+    languageSubtitle: 'Craft Masteryમાં ઉપયોગ કરવાની ભાષા પસંદ કરો.',
+    greeting: 'નમસ્કાર, {name}!',
+    artisan: 'કારીગર',
+    dashboardSubtitle: 'તમારી હસ્તકલા વર્કશોપનો અવલોકન.',
+    heroTitle: 'બોલો. ફોટો લો. વેચો.',
+    heroSubtitle: 'તમારી ભાષામાં ફોટો અને અવાજના વર્ણનથી નવી ક્રાફ્ટ લિસ્ટિંગ બનાવો.',
+    addNewCraft: 'નવી ક્રાફ્ટ લિસ્ટિંગ ઉમેરો',
+    activeListings: 'સક્રિય લિસ્ટિંગ્સ',
+    buyerInquiries: 'ખરીદદારની પૂછપરછ',
+    trendMonth: 'આ મહિને +3',
+    needsAttention: 'ધ્યાન જરૂરી',
+    reachOndc: 'ONDC નેટવર્ક દ્વારા સમગ્ર ભારતના ગ્રાહકો સુધી પહોંચો.',
+    connectOndc: 'ONDC સાથે જોડાઓ',
+    gemDescription: 'સરકારી ખરીદદારો માટે તમારા ઉત્પાદનો લિસ્ટ કરો.',
+    exploreGem: 'GeM જુઓ',
+    demo: 'ડેમો',
+    listen: 'સાંભળો',
+    edit: 'ફેરફાર કરો',
+    productActions: 'ઉત્પાદન ક્રિયાઓ',
+    noVoice: 'આ ઉત્પાદનનું વોઇસ વર્ણન હજુ સાચવાયેલું નથી.',
+    audioUnavailable: 'ઓડિયો ઉપલબ્ધ નથી',
+    audioUnavailableText: 'ઉત્પાદન ઓડિયો ખોલી શકાયું નથી.',
+    myProductsTitle: 'મારા ઉત્પાદનો',
+    viewAll: 'બધું જુઓ',
+    loading: 'તમારી ક્રાફ્ટ્સ લોડ થઈ રહી છે...',
+    keepCreating: 'બનાવતા રહો',
+    creativeText: 'તમારી ક્રાફ્ટ્સ દુનિયાને વધુ સુંદર બનાવે છે.',
+    craftVoice: 'ક્રાફ્ટ વોઇસ આસિસ્ટન્ટ',
+    craftVoiceText: 'તમારી ક્રાફ્ટનું વર્ણન કરવા માઇક્રોફોન આસિસ્ટન્ટનો ઉપયોગ કરો.',
+    ordersReceived: 'મળેલા ઓર્ડર',
+    shopRating: 'દુકાન રેટિંગ',
+    trendWeek: 'આ અઠવાડિયે +2',
+    excellent: 'ઉત્તમ',
+  },
+  pa: {
+    dashboard: 'ਡੈਸ਼ਬੋਰਡ',
+    myProducts: 'ਮੇਰੇ ਉਤਪਾਦ',
+    addProduct: 'ਉਤਪਾਦ ਸ਼ਾਮਲ ਕਰੋ',
+    orders: 'ਆਰਡਰ',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'ਸੁਨੇਹੇ',
+    analytics: 'ਵਿਸ਼ਲੇਸ਼ਣ',
+    profile: 'ਪ੍ਰੋਫਾਈਲ',
+    settings: 'ਸੈਟਿੰਗਾਂ',
+    searchPlaceholder: 'ਉਤਪਾਦ, ਖਰੀਦਦਾਰ ਜਾਂ ਮੌਕੇ ਖੋਜੋ...',
+    changeLanguage: 'ਭਾਸ਼ਾ ਬਦਲੋ',
+    close: 'ਬੰਦ ਕਰੋ',
+    selectLanguage: 'ਭਾਸ਼ਾ ਚੁਣੋ',
+    languageSubtitle: 'Craft Mastery ਵਿੱਚ ਵਰਤਣ ਲਈ ਭਾਸ਼ਾ ਚੁਣੋ।',
+    greeting: 'ਨਮਸਕਾਰ, {name}!',
+    artisan: 'ਕਾਰੀਗਰ',
+    dashboardSubtitle: 'ਤੁਹਾਡੀ ਹੱਥ ਨਾਲ ਬਣੀ ਕਲਾ ਵਰਕਸ਼ਾਪ ਦਾ ਜਾਇਜ਼ਾ।',
+    heroTitle: 'ਬੋਲੋ। ਫੋਟੋ ਲਓ। ਵੇਚੋ।',
+    heroSubtitle: 'ਆਪਣੀ ਭਾਸ਼ਾ ਵਿੱਚ ਫੋਟੋ ਅਤੇ ਆਵਾਜ਼ ਦੇ ਵੇਰਵੇ ਨਾਲ ਨਵੀਂ ਕ੍ਰਾਫਟ ਲਿਸਟਿੰਗ ਬਣਾਓ।',
+    addNewCraft: 'ਨਵੀਂ ਕ੍ਰਾਫਟ ਲਿਸਟਿੰਗ ਸ਼ਾਮਲ ਕਰੋ',
+    activeListings: 'ਸਰਗਰਮ ਲਿਸਟਿੰਗ',
+    buyerInquiries: 'ਖਰੀਦਦਾਰ ਪੁੱਛਗਿੱਛ',
+    trendMonth: 'ਇਸ ਮਹੀਨੇ +3',
+    needsAttention: 'ਧਿਆਨ ਦੀ ਲੋੜ',
+    reachOndc: 'ONDC ਨੈੱਟਵਰਕ ਰਾਹੀਂ ਭਾਰਤ ਭਰ ਦੇ ਗਾਹਕਾਂ ਤੱਕ ਪਹੁੰਚੋ।',
+    connectOndc: 'ONDC ਨਾਲ ਜੁੜੋ',
+    gemDescription: 'ਸਰਕਾਰੀ ਖਰੀਦਦਾਰਾਂ ਲਈ ਆਪਣੇ ਉਤਪਾਦ ਲਿਸਟ ਕਰੋ।',
+    exploreGem: 'GeM ਵੇਖੋ',
+    demo: 'ਡੈਮੋ',
+    listen: 'ਸੁਣੋ',
+    edit: 'ਸੋਧੋ',
+    productActions: 'ਉਤਪਾਦ ਕਾਰਵਾਈਆਂ',
+    noVoice: 'ਇਸ ਉਤਪਾਦ ਲਈ ਆਵਾਜ਼ ਦਾ ਵੇਰਵਾ ਹਾਲੇ ਸੇਵ ਨਹੀਂ ਹੈ।',
+    audioUnavailable: 'ਆਡੀਓ ਉਪਲਬਧ ਨਹੀਂ',
+    audioUnavailableText: 'ਉਤਪਾਦ ਆਡੀਓ ਨਹੀਂ ਖੋਲ੍ਹਿਆ ਜਾ ਸਕਿਆ।',
+    myProductsTitle: 'ਮੇਰੇ ਉਤਪਾਦ',
+    viewAll: 'ਸਭ ਵੇਖੋ',
+    loading: 'ਤੁਹਾਡੀਆਂ ਕ੍ਰਾਫਟਾਂ ਲੋਡ ਹੋ ਰਹੀਆਂ ਹਨ...',
+    keepCreating: 'ਬਣਾਉਂਦੇ ਰਹੋ',
+    creativeText: 'ਤੁਹਾਡੀਆਂ ਕ੍ਰਾਫਟਾਂ ਦੁਨੀਆ ਨੂੰ ਹੋਰ ਸੁੰਦਰ ਬਣਾਉਂਦੀਆਂ ਹਨ।',
+    craftVoice: 'ਕ੍ਰਾਫਟ ਵੌਇਸ ਅਸਿਸਟੈਂਟ',
+    craftVoiceText: 'ਆਪਣੀ ਕ੍ਰਾਫਟ ਦਾ ਵੇਰਵਾ ਦੇਣ ਲਈ ਮਾਈਕ੍ਰੋਫੋਨ ਅਸਿਸਟੈਂਟ ਵਰਤੋ।',
+    ordersReceived: 'ਪ੍ਰਾਪਤ ਆਰਡਰ',
+    shopRating: 'ਦੁਕਾਨ ਰੇਟਿੰਗ',
+    trendWeek: 'ਇਸ ਹਫ਼ਤੇ +2',
+    excellent: 'ਸ਼ਾਨਦਾਰ',
+  },
+  or: {
+    dashboard: 'ଡ୍ୟାସବୋର୍ଡ',
+    myProducts: 'ମୋ ଉତ୍ପାଦ',
+    addProduct: 'ଉତ୍ପାଦ ଯୋଡନ୍ତୁ',
+    orders: 'ଅର୍ଡର',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'ବାର୍ତ୍ତା',
+    analytics: 'ବିଶ୍ଳେଷଣ',
+    profile: 'ପ୍ରୋଫାଇଲ୍',
+    settings: 'ସେଟିଂସ୍',
+    searchPlaceholder: 'ଉତ୍ପାଦ, କ୍ରେତା କିମ୍ବା ସୁଯୋଗ ଖୋଜନ୍ତୁ...',
+    changeLanguage: 'ଭାଷା ବଦଳାନ୍ତୁ',
+    close: 'ବନ୍ଦ କରନ୍ତୁ',
+    selectLanguage: 'ଭାଷା ବାଛନ୍ତୁ',
+    languageSubtitle: 'Craft Masteryରେ ବ୍ୟବହାର କରିବାକୁ ଭାଷା ବାଛନ୍ତୁ।',
+    greeting: 'ନମସ୍କାର, {name}!',
+    artisan: 'କାରିଗର',
+    dashboardSubtitle: 'ଆପଣଙ୍କ ହସ୍ତଶିଳ୍ପ କାର୍ଯ୍ୟଶାଳାର ସାରାଂଶ।',
+    heroTitle: 'କୁହନ୍ତୁ। ଫଟୋ ନିଅନ୍ତୁ। ବିକ୍ରି କରନ୍ତୁ।',
+    heroSubtitle: 'ଆପଣଙ୍କ ଭାଷାରେ ଫଟୋ ଏବଂ ସ୍ୱର ବର୍ଣ୍ଣନାରୁ ନୂଆ କ୍ରାଫ୍ଟ ଲିଷ୍ଟିଂ ତିଆରି କରନ୍ତୁ।',
+    addNewCraft: 'ନୂଆ କ୍ରାଫ୍ଟ ଲିଷ୍ଟିଂ ଯୋଡନ୍ତୁ',
+    activeListings: 'ସକ୍ରିୟ ଲିଷ୍ଟିଂ',
+    buyerInquiries: 'କ୍ରେତାଙ୍କ ପଚରାଉଚରା',
+    trendMonth: 'ଏହି ମାସରେ +3',
+    needsAttention: 'ଧ୍ୟାନ ଆବଶ୍ୟକ',
+    reachOndc: 'ONDC ନେଟୱର୍କ ମାଧ୍ୟମରେ ଭାରତ ସାରା ଗ୍ରାହକଙ୍କୁ ପହଞ୍ଚନ୍ତୁ।',
+    connectOndc: 'ONDC ସହିତ ଯୋଡନ୍ତୁ',
+    gemDescription: 'ସରକାରୀ କ୍ରେତାଙ୍କ ପାଇଁ ଆପଣଙ୍କ ଉତ୍ପାଦ ଲିଷ୍ଟ କରନ୍ତୁ।',
+    exploreGem: 'GeM ଦେଖନ୍ତୁ',
+    demo: 'ଡେମୋ',
+    listen: 'ଶୁଣନ୍ତୁ',
+    edit: 'ସମ୍ପାଦନା',
+    productActions: 'ଉତ୍ପାଦ କାର୍ଯ୍ୟ',
+    noVoice: 'ଏହି ଉତ୍ପାଦର ସ୍ୱର ବର୍ଣ୍ଣନା ଏପର୍ଯ୍ୟନ୍ତ ସେଭ୍ ହୋଇନାହିଁ।',
+    audioUnavailable: 'ଅଡିଓ ଉପଲବ୍ଧ ନାହିଁ',
+    audioUnavailableText: 'ଉତ୍ପାଦ ଅଡିଓ ଖୋଲିପାରିଲୁ ନାହିଁ।',
+    myProductsTitle: 'ମୋ ଉତ୍ପାଦ',
+    viewAll: 'ସବୁ ଦେଖନ୍ତୁ',
+    loading: 'ଆପଣଙ୍କ କ୍ରାଫ୍ଟ ଲୋଡ୍ ହେଉଛି...',
+    keepCreating: 'ସୃଷ୍ଟି କରୁଥାନ୍ତୁ',
+    creativeText: 'ଆପଣଙ୍କ କ୍ରାଫ୍ଟ ଦୁନିଆକୁ ଅଧିକ ସୁନ୍ଦର କରେ।',
+    craftVoice: 'କ୍ରାଫ୍ଟ ଭଏସ୍ ଆସିଷ୍ଟାଣ୍ଟ',
+    craftVoiceText: 'ଆପଣଙ୍କ କ୍ରାଫ୍ଟ ବର୍ଣ୍ଣନା କରିବାକୁ ମାଇକ୍ରୋଫୋନ୍ ଆସିଷ୍ଟାଣ୍ଟ ବ୍ୟବହାର କରନ୍ତୁ।',
+    ordersReceived: 'ପ୍ରାପ୍ତ ଅର୍ଡର',
+    shopRating: 'ଦୋକାନ ରେଟିଂ',
+    trendWeek: 'ଏହି ସପ୍ତାହରେ +2',
+    excellent: 'ଉତ୍କୃଷ୍ଟ',
+  },
+  as: {
+    dashboard: 'ডেশ্বব’ৰ্ড',
+    myProducts: 'মোৰ সামগ্ৰী',
+    addProduct: 'সামগ্ৰী যোগ কৰক',
+    orders: 'অৰ্ডাৰ',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'বাৰ্তা',
+    analytics: 'বিশ্লেষণ',
+    profile: 'প্ৰফাইল',
+    settings: 'ছেটিংছ',
+    searchPlaceholder: 'সামগ্ৰী, ক্ৰেতা বা সুযোগ বিচাৰক...',
+    changeLanguage: 'ভাষা সলনি কৰক',
+    close: 'বন্ধ কৰক',
+    selectLanguage: 'ভাষা বাছনি কৰক',
+    languageSubtitle: 'Craft Masteryত ব্যৱহাৰ কৰিব বিচৰা ভাষা বাছনি কৰক।',
+    greeting: 'নমস্কাৰ, {name}!',
+    artisan: 'কাৰিকৰ',
+    dashboardSubtitle: 'আপোনাৰ হস্তশিল্প কৰ্মশালাৰ পৰ্যালোচনা।',
+    heroTitle: 'কওক। ফটো লওক। বিক্ৰী কৰক।',
+    heroSubtitle: 'আপোনাৰ ভাষাত ফটো আৰু কণ্ঠ বিৱৰণৰ পৰা নতুন ক্ৰাফ্ট লিষ্টিং সৃষ্টি কৰক।',
+    addNewCraft: 'নতুন ক্ৰাফ্ট লিষ্টিং যোগ কৰক',
+    activeListings: 'সক্ৰিয় লিষ্টিং',
+    buyerInquiries: 'ক্ৰেতাৰ অনুসন্ধান',
+    trendMonth: 'এই মাহত +3',
+    needsAttention: 'মনোযোগৰ প্ৰয়োজন',
+    reachOndc: 'ONDC নেটৱৰ্কৰ জৰিয়তে ভাৰতৰ গ্ৰাহকৰ ওচৰলৈ যাওক।',
+    connectOndc: 'ONDCৰ সৈতে সংযোগ কৰক',
+    gemDescription: 'চৰকাৰী ক্ৰেতাৰ বাবে আপোনাৰ সামগ্ৰী লিষ্ট কৰক।',
+    exploreGem: 'GeM চাওক',
+    demo: 'ডেমো',
+    listen: 'শুনক',
+    edit: 'সম্পাদনা',
+    productActions: 'সামগ্ৰীৰ কাৰ্য',
+    noVoice: 'এই সামগ্ৰীৰ বাবে এতিয়াও কণ্ঠ বিৱৰণ সংৰক্ষণ কৰা হোৱা নাই।',
+    audioUnavailable: 'অডিঅ’ উপলব্ধ নহয়',
+    audioUnavailableText: 'সামগ্ৰীৰ অডিঅ’ খুলিব পৰা নগ’ল।',
+    myProductsTitle: 'মোৰ সামগ্ৰী',
+    viewAll: 'সকলো চাওক',
+    loading: 'আপোনাৰ ক্ৰাফ্টসমূহ লোড হৈ আছে...',
+    keepCreating: 'সৃষ্টি কৰি থাকক',
+    creativeText: 'আপোনাৰ ক্ৰাফ্টে পৃথিৱীখনক অধিক সুন্দৰ কৰে।',
+    craftVoice: 'ক্ৰাফ্ট ভইচ সহায়ক',
+    craftVoiceText: 'আপোনাৰ ক্ৰাফ্ট বৰ্ণনা কৰিবলৈ মাইক্ৰ’ফোন সহায়ক ব্যৱহাৰ কৰক।',
+    ordersReceived: 'প্ৰাপ্ত অৰ্ডাৰ',
+    shopRating: 'দোকানৰ ৰেটিং',
+    trendWeek: 'এই সপ্তাহত +2',
+    excellent: 'উৎকৃষ্ট',
+  },
+  ur: {
+    dashboard: 'ڈیش بورڈ',
+    myProducts: 'میری مصنوعات',
+    addProduct: 'مصنوعات شامل کریں',
+    orders: 'آرڈرز',
+    ondc: 'ONDC',
+    gem: 'GeM',
+    messages: 'پیغامات',
+    analytics: 'تجزیہ',
+    profile: 'پروفائل',
+    settings: 'ترتیبات',
+    searchPlaceholder: 'مصنوعات، خریدار یا مواقع تلاش کریں...',
+    changeLanguage: 'زبان تبدیل کریں',
+    close: 'بند کریں',
+    selectLanguage: 'زبان منتخب کریں',
+    languageSubtitle: 'Craft Mastery میں استعمال کرنے کے لیے زبان منتخب کریں۔',
+    greeting: 'آداب، {name}!',
+    artisan: 'کاریگر',
+    dashboardSubtitle: 'آپ کی دستکاری ورکشاپ کا جائزہ۔',
+    heroTitle: 'بولیں۔ تصویر لیں۔ فروخت کریں۔',
+    heroSubtitle: 'اپنی زبان میں تصویر اور آواز کی وضاحت سے نئی کرافٹ لسٹنگ بنائیں۔',
+    addNewCraft: 'نئی کرافٹ لسٹنگ شامل کریں',
+    activeListings: 'فعال لسٹنگز',
+    buyerInquiries: 'خریداروں کی پوچھ گچھ',
+    trendMonth: 'اس ماہ +3',
+    needsAttention: 'توجہ درکار ہے',
+    reachOndc: 'ONDC نیٹ ورک کے ذریعے پورے بھارت میں صارفین تک پہنچیں۔',
+    connectOndc: 'ONDC سے منسلک ہوں',
+    gemDescription: 'سرکاری خریداروں کے لیے اپنی مصنوعات درج کریں۔',
+    exploreGem: 'GeM دیکھیں',
+    demo: 'ڈیمو',
+    listen: 'سنیں',
+    edit: 'ترمیم',
+    productActions: 'مصنوعات کے اعمال',
+    noVoice: 'اس پروڈکٹ کی آواز کی وضاحت ابھی محفوظ نہیں ہے۔',
+    audioUnavailable: 'آڈیو دستیاب نہیں',
+    audioUnavailableText: 'مصنوعات کا آڈیو نہیں کھولا جا سکا۔',
+    myProductsTitle: 'میری مصنوعات',
+    viewAll: 'سب دیکھیں',
+    loading: 'آپ کی کرافٹس لوڈ ہو رہی ہیں...',
+    keepCreating: 'تخلیق جاری رکھیں',
+    creativeText: 'آپ کی کرافٹس دنیا کو مزید خوبصورت بناتی ہیں۔',
+    craftVoice: 'کرافٹ وائس اسسٹنٹ',
+    craftVoiceText: 'اپنی کرافٹ بیان کرنے کے لیے مائیکروفون اسسٹنٹ استعمال کریں۔',
+    ordersReceived: 'موصولہ آرڈرز',
+    shopRating: 'دکان کی ریٹنگ',
+    trendWeek: 'اس ہفتے +2',
+    excellent: 'بہترین',
+  },
+};
+
+const dashboardText = (lang: string, key: string) =>
+  DASHBOARD_TEXT[lang]?.[key] || DASHBOARD_TEXT.en[key] || key;
+
+const interpolate = (value: string, values: Record<string, string>) =>
+  Object.entries(values).reduce(
+    (result, [key, replacement]) => result.replace(`{${key}}`, replacement),
+    value,
+  );
+
+
 export const DashboardScreen: React.FC<
   Props
 > = ({ navigation }) => {
   const { width } =
     useWindowDimensions();
+
+  const { lang, setLang } = useLanguage();
+
+  const [
+    languageMenuVisible,
+    setLanguageMenuVisible,
+  ] = useState(false);
 
   const isDesktop =
     width >= 1000;
@@ -384,6 +1063,11 @@ export const DashboardScreen: React.FC<
   ] = useState(0);
 
   const [
+    realOrderCount,
+    setRealOrderCount,
+  ] = useState(0);
+
+  const [
     search,
     setSearch,
   ] = useState('');
@@ -414,12 +1098,14 @@ export const DashboardScreen: React.FC<
             userResult,
             productsResult,
             inquiriesResult,
+            ordersResult,
           ] =
             await Promise.allSettled(
               [
                 AuthAdapter.getCurrentUser(),
                 ApiAdapter.getProducts(),
                 ApiAdapter.getInquiries(),
+                ApiAdapter.getOrders(),
               ],
             );
 
@@ -516,6 +1202,10 @@ export const DashboardScreen: React.FC<
             setInquiriesCount(
               visibleInquiries.length,
             );
+          }
+
+          if (ordersResult.status === 'fulfilled') {
+            setRealOrderCount(Array.isArray(ordersResult.value) ? ordersResult.value.length : 0);
           }
         } catch (error) {
           console.log(
@@ -619,8 +1309,8 @@ export const DashboardScreen: React.FC<
 
     if (!audioUrl) {
       Alert.alert(
-        'Product Voice',
-        'This product does not have a saved voice description yet.',
+        dashboardText(lang, 'productActions'),
+        dashboardText(lang, 'noVoice'),
       );
       return;
     }
@@ -631,8 +1321,8 @@ export const DashboardScreen: React.FC<
       );
     } catch {
       Alert.alert(
-        'Audio unavailable',
-        'Could not open the product audio.',
+        dashboardText(lang, 'audioUnavailable'),
+        dashboardText(lang, 'audioUnavailableText'),
       );
     }
   };
@@ -688,7 +1378,7 @@ export const DashboardScreen: React.FC<
         {/* Dashboard */}
         <SidebarItem
           icon="home"
-          label="Dashboard"
+          label={dashboardText(lang, 'dashboard')}
           active
           collapsed={false}
           onPress={() => goTo('Dashboard')}
@@ -697,7 +1387,7 @@ export const DashboardScreen: React.FC<
         {/* My Products */}
         <SidebarItem
           icon="grid-outline"
-          label="My Products"
+          label={dashboardText(lang, 'myProducts')}
           collapsed={false}
           onPress={() => goTo('Catalog')}
         />
@@ -705,7 +1395,7 @@ export const DashboardScreen: React.FC<
         {/* Add Product */}
         <SidebarItem
           icon="add-circle-outline"
-          label="Add Product"
+          label={dashboardText(lang, 'addProduct')}
           collapsed={false}
           onPress={() => goTo('UploadWizard')}
         />
@@ -713,7 +1403,7 @@ export const DashboardScreen: React.FC<
         {/* Orders */}
         <SidebarItem
           icon="cart-outline"
-          label="Orders"
+          label={dashboardText(lang, 'orders')}
           collapsed={false}
           onPress={() => goTo('Orders')}
         />
@@ -721,7 +1411,7 @@ export const DashboardScreen: React.FC<
         {/* ONDC */}
         <SidebarItem
           icon="globe-outline"
-          label="ONDC"
+          label={dashboardText(lang, 'ondc')}
           collapsed={false}
           onPress={() => {
             Linking.openURL('https://ondc.org/');
@@ -731,7 +1421,7 @@ export const DashboardScreen: React.FC<
         {/* GeM */}
         <SidebarItem
           icon="business-outline"
-          label="GeM"
+          label={dashboardText(lang, 'gem')}
           collapsed={false}
           onPress={() => {
             Linking.openURL('https://gem.gov.in/');
@@ -741,8 +1431,8 @@ export const DashboardScreen: React.FC<
         {/* Messages */}
         <SidebarItem
           icon="chatbubble-outline"
-          label="Messages"
-          badge={inquiriesCount || 3}
+          label={dashboardText(lang, 'messages')}
+          badge={inquiriesCount}
           collapsed={false}
           onPress={() => goTo('Messages')}
         />
@@ -750,7 +1440,7 @@ export const DashboardScreen: React.FC<
         {/* Analytics */}
         <SidebarItem
           icon="bar-chart-outline"
-          label="Analytics"
+          label={dashboardText(lang, 'analytics')}
           collapsed={false}
           onPress={() => {}}
         />
@@ -758,7 +1448,7 @@ export const DashboardScreen: React.FC<
         {/* Profile */}
         <SidebarItem
           icon="person-outline"
-          label="Profile"
+          label={dashboardText(lang, 'profile')}
           collapsed={false}
           onPress={() => goTo('Profile')}
         />
@@ -766,7 +1456,7 @@ export const DashboardScreen: React.FC<
         {/* Settings */}
         <SidebarItem
           icon="settings-outline"
-          label="Settings"
+          label={dashboardText(lang, 'settings')}
           collapsed={false}
           onPress={() => goTo('Profile')}
         />
@@ -798,6 +1488,16 @@ export const DashboardScreen: React.FC<
   |--------------------------------------------------------------------------
   */
 
+  const handleLanguageChange = (code: string) => {
+    try {
+      setLang(code as any);
+    } catch (error) {
+      console.warn('[Dashboard] Failed to change language:', error);
+    } finally {
+      setLanguageMenuVisible(false);
+    }
+  };
+
   const TopHeader = () => (
     <View
       style={
@@ -820,7 +1520,7 @@ export const DashboardScreen: React.FC<
           onChangeText={
             setSearch
           }
-          placeholder="Search products, buyers, or opportunities..."
+          placeholder={dashboardText(lang, 'searchPlaceholder')}
           placeholderTextColor="#98918B"
           style={
             styles.searchInput
@@ -834,9 +1534,11 @@ export const DashboardScreen: React.FC<
         }
       >
         <Pressable
-          style={
-            styles.languageButton
-          }
+          style={styles.languageButton}
+          onPress={() => setLanguageMenuVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel={dashboardText(lang, 'changeLanguage')}
+          accessibilityHint="Opens the language selection menu"
         >
           <Ionicons
             name="globe-outline"
@@ -845,11 +1547,10 @@ export const DashboardScreen: React.FC<
           />
 
           <Text
-            style={
-              styles.languageText
-            }
+            style={styles.languageText}
+            numberOfLines={1}
           >
-            English
+            {LANGUAGE_NAMES[lang] || LANGUAGE_NAMES.en}
           </Text>
 
           <Ionicons
@@ -963,19 +1664,19 @@ export const DashboardScreen: React.FC<
       <View style={styles.heroOverlay}>
         <View style={styles.heroTextArea}>
           <Text style={styles.heroGreeting}>
-            Namaskaram, {userName}!
+            {interpolate(dashboardText(lang, 'greeting'), { name: userName })}
           </Text>
 
           <Text style={styles.heroSubtitle}>
-            Your handmade craft workshop overview.
+            {dashboardText(lang, 'dashboardSubtitle')}
           </Text>
 
           <Text style={styles.heroHeadline}>
-            Speak it. Snap it. Sell it.
+            {dashboardText(lang, 'heroTitle')}
           </Text>
 
           <Text style={styles.heroDescription}>
-            Turn a photo and a spoken description into a new craft listing — in your language.
+            {dashboardText(lang, 'heroSubtitle')}
           </Text>
 
           <Pressable
@@ -999,7 +1700,7 @@ export const DashboardScreen: React.FC<
             />
 
             <Text style={styles.heroButtonText}>
-              Add New Craft Listing
+              {dashboardText(lang, 'addNewCraft')}
             </Text>
           </Pressable>
         </View>
@@ -1026,45 +1727,41 @@ export const DashboardScreen: React.FC<
             ? realProductCount
             : 12,
         )}
-        label="Active Listings"
+        label={dashboardText(lang, 'activeListings')}
         background="#EAF6E8"
         iconBackground="#D9F0D7"
         iconColor="#4C9B50"
-        trend="+3 this month"
+        trend={dashboardText(lang, 'trendMonth')}
       />
 
       <StatCard
         icon="cart-outline"
-        value={String(
-          inquiriesCount > 0
-            ? inquiriesCount
-            : 8,
-        )}
-        label="Buyer Inquiries"
+        value={String(inquiriesCount)}
+        label={dashboardText(lang, 'buyerInquiries')}
         background="#FFF0E5"
         iconBackground="#FFE0CA"
         iconColor="#C66B32"
-        trend="Needs attention"
+        trend={dashboardText(lang, 'needsAttention')}
       />
 
       <StatCard
         icon="bag-handle-outline"
-        value="5"
-        label="Orders Received"
+        value={String(realOrderCount)}
+        label={dashboardText(lang, 'ordersReceived')}
         background="#EAF2FB"
         iconBackground="#D8E9FA"
         iconColor="#4287C8"
-        trend="+2 this week"
+        trend={dashboardText(lang, 'trendWeek')}
       />
 
       <StatCard
         icon="star-outline"
         value="4.8"
-        label="Shop Rating"
+        label="{dashboardText(lang, 'shopRating')}"
         background="#FFF5D9"
         iconBackground="#FFE9A9"
         iconColor="#C99118"
-        trend="Excellent"
+        trend={dashboardText(lang, 'excellent')}
       />
     </View>
   );
@@ -1141,7 +1838,7 @@ export const DashboardScreen: React.FC<
                 styles.marketplaceButtonText
               }
             >
-              Connect to ONDC
+              {dashboardText(lang, 'connectOndc')}
             </Text>
 
             <Ionicons
@@ -1210,7 +1907,7 @@ export const DashboardScreen: React.FC<
                 styles.marketplaceButtonText
               }
             >
-              Explore GeM
+              {dashboardText(lang, 'exploreGem')}
             </Text>
 
             <Ionicons
@@ -1627,7 +2324,7 @@ export const DashboardScreen: React.FC<
       >
         <QuickAction
           icon="add-circle-outline"
-          label="Add Product"
+          label={dashboardText(lang, 'addProduct')}
           onPress={() =>
             goTo(
               'UploadWizard',
@@ -1637,7 +2334,7 @@ export const DashboardScreen: React.FC<
 
         <QuickAction
           icon="grid-outline"
-          label="My Products"
+          label={dashboardText(lang, 'myProducts')}
           onPress={() =>
             goTo('Catalog')
           }
@@ -1646,7 +2343,7 @@ export const DashboardScreen: React.FC<
 
         <QuickAction
           icon="chatbubble-outline"
-          label="Messages"
+          label={dashboardText(lang, 'messages')}
           onPress={() =>
             goTo('Messages')
           }
@@ -1654,7 +2351,7 @@ export const DashboardScreen: React.FC<
 
         <QuickAction
           icon="person-outline"
-          label="Profile"
+          label={dashboardText(lang, 'profile')}
           onPress={() =>
             goTo('Profile')
           }
@@ -1684,6 +2381,96 @@ export const DashboardScreen: React.FC<
           style={styles.main}
         >
           <TopHeader />
+
+          <Modal
+            visible={languageMenuVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setLanguageMenuVisible(false)}
+          >
+            <Pressable
+              style={styles.languageModalOverlay}
+              onPress={() => setLanguageMenuVisible(false)}
+            >
+              <Pressable
+                style={styles.languageModalCard}
+                onPress={(event) => event.stopPropagation()}
+              >
+                <View style={styles.languageModalHeader}>
+                  <View style={styles.languageModalHeaderCopy}>
+                    <Text style={styles.languageModalTitle}>
+                      {dashboardText(lang, 'selectLanguage')}
+                    </Text>
+                    <Text style={styles.languageModalSubtitle}>
+                      {dashboardText(lang, 'languageSubtitle')}
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    onPress={() => setLanguageMenuVisible(false)}
+                    style={styles.languageCloseButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={dashboardText(lang, 'close')}
+                  >
+                    <Ionicons name="close" size={20} color="#5D5148" />
+                  </Pressable>
+                </View>
+
+                <ScrollView
+                  style={styles.languageList}
+                  contentContainerStyle={styles.languageListContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {LANGUAGE_OPTIONS.map((language) => {
+                    const selected = lang === language.code;
+
+                    return (
+                      <Pressable
+                        key={language.code}
+                        onPress={() => handleLanguageChange(language.code)}
+                        style={[
+                          styles.languageOption,
+                          selected && styles.languageOptionSelected,
+                        ]}
+                      >
+                        <View style={styles.languageOptionLeft}>
+                          <View
+                            style={[
+                              styles.languageOptionIcon,
+                              selected && styles.languageOptionIconSelected,
+                            ]}
+                          >
+                            <Ionicons
+                              name="language-outline"
+                              size={18}
+                              color={selected ? '#FFFFFF' : '#6B5A4E'}
+                            />
+                          </View>
+
+                          <Text
+                            style={[
+                              styles.languageOptionText,
+                              selected && styles.languageOptionTextSelected,
+                            ]}
+                          >
+                            {language.name}
+                          </Text>
+                        </View>
+
+                        {selected ? (
+                          <Ionicons
+                            name="checkmark-circle"
+                            size={21}
+                            color="#8A5A3B"
+                          />
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </Pressable>
+            </Pressable>
+          </Modal>
 
           <ScrollView
             showsVerticalScrollIndicator={
@@ -1724,8 +2511,8 @@ export const DashboardScreen: React.FC<
               }
               onPress={() =>
                 Alert.alert(
-                  'Craft Voice Assistant',
-                  'Use the microphone assistant to describe your craft.',
+                  dashboardText(lang, 'craftVoice'),
+                  dashboardText(lang, 'craftVoiceText'),
                 )
               }
             >
@@ -2103,6 +2890,121 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     marginHorizontal: 7,
+  },
+
+  languageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(34, 27, 22, 0.38)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 78,
+    paddingRight: 26,
+  },
+
+  languageModalCard: {
+    width: 330,
+    maxHeight: 560,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E5DDD5',
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+
+  languageModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+
+  languageModalHeaderCopy: {
+    flex: 1,
+    paddingRight: 10,
+  },
+
+  languageModalTitle: {
+    color: '#3C3029',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+
+  languageModalSubtitle: {
+    color: '#77716C',
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 4,
+  },
+
+  languageCloseButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#F8F6F3',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  languageList: {
+    maxHeight: 430,
+  },
+
+  languageListContent: {
+    paddingVertical: 2,
+    gap: 7,
+  },
+
+  languageOption: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EEE5DC',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  languageOptionSelected: {
+    backgroundColor: '#F6EEE7',
+    borderColor: '#CBA98E',
+  },
+
+  languageOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+
+  languageOptionIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#F1ECE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+
+  languageOptionIconSelected: {
+    backgroundColor: '#8A5A3B',
+  },
+
+  languageOptionText: {
+    color: '#4F443D',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  languageOptionTextSelected: {
+    color: '#6F452E',
+    fontWeight: '800',
   },
 
   notificationButton: {

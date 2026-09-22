@@ -2236,6 +2236,63 @@ app.get('/api/inquiries', (req, res) => {
   return res.json(inquiries);
 });
 
+// 9A. Real Orders API
+// Orders are backed by real customer inquiry records. A customer request with
+// requestedQuantity/quantityNeeded becomes an order visible to the artisan.
+// No demo order records are created here.
+function orderQuantity(item: any): number {
+  const raw = item?.requestedQuantity ?? item?.quantityNeeded ?? item?.quantity ?? 0;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+app.get('/api/orders', (req, res) => {
+  const auth = req.auth!;
+  const orders = visibleInquiriesFor(auth)
+    .filter((inquiry) => !DEMO_INQUIRY_IDS.has(inquiry.id) && orderQuantity(inquiry) > 0)
+    .map((inquiry) => ({
+      ...serializeInquiry(inquiry, auth),
+      requestedQuantity: orderQuantity(inquiry),
+      orderId: inquiry.id,
+      status: inquiry.status || 'PENDING',
+    }));
+  return res.json(orders);
+});
+
+app.patch(
+  '/api/orders/:id/status',
+  requireRole('ARTISAN', 'ADMIN'),
+  validateParam('id', /^[-A-Za-z0-9_]+$/),
+  validateBody(['status']),
+  (req, res) => {
+    const auth = req.auth!;
+    const status = String(req.body?.status || '').toUpperCase();
+    const allowed = new Set(['PENDING', 'ACCEPTED', 'REJECTED', 'SHIPPED', 'DELIVERED']);
+    if (!allowed.has(status)) return clientError(res, 400, 'Invalid order status');
+
+    const inquiry = inquiriesDb.find((item) => item.id === req.params.id);
+    if (!inquiry || DEMO_INQUIRY_IDS.has(inquiry.id) || orderQuantity(inquiry) <= 0) {
+      return clientError(res, 404, 'Order not found');
+    }
+
+    const visible = visibleInquiriesFor(auth).some((item) => item.id === inquiry.id);
+    if (!visible) return clientError(res, 403, 'You do not have access to this order');
+
+    inquiry.status = status;
+    inquiry.updatedAt = new Date().toISOString();
+    saveStoreToDisk();
+
+    return res.json({
+      order: {
+        ...serializeInquiry(inquiry, auth),
+        requestedQuantity: orderQuantity(inquiry),
+        orderId: inquiry.id,
+        status,
+      },
+    });
+  },
+);
+
 // Customer creates a new inquiry / bulk-order request.
 app.post(
   '/api/inquiries',

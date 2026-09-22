@@ -290,7 +290,17 @@ export const UploadScreen: React.FC = () => {
       setIsProcessing(true);
 
       try {
-        await audioStream.stream.stop();
+        // expo-audio can temporarily expose no stream on Web.
+        // Guard it so pressing Stop never crashes with:
+        // "Cannot read properties of undefined (reading 'stop')".
+        const stream = audioStream?.stream;
+        if (stream) {
+          try {
+            await stream.stop();
+          } catch (audioError) {
+            console.warn('[Upload voice] Audio stream stop failed:', audioError);
+          }
+        }
 
         const socket = socketRef.current;
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -377,7 +387,7 @@ export const UploadScreen: React.FC = () => {
         }
       };
 
-      socket.onmessage = (event) => {
+      socket.onmessage = async(event) => {
         try {
           const message = JSON.parse(event.data);
 
@@ -385,7 +395,39 @@ export const UploadScreen: React.FC = () => {
             isRecordingRef.current = true;
             setIsRecording(true);
             setIsProcessing(false);
-            audioStream.stream.start();
+
+            // The stream may be unavailable briefly on Web.
+            const stream = audioStream?.stream;
+            if (!stream) {
+              console.error('[Upload voice] Audio stream is unavailable.');
+              isRecordingRef.current = false;
+              setIsRecording(false);
+              setIsProcessing(false);
+              Alert.alert(
+                'Microphone unavailable',
+                'The microphone stream is not ready. Please reload the app, allow microphone access, and try again.',
+              );
+              try {
+                socket.close();
+              } catch {}
+              return;
+            }
+
+            try {
+              await stream.start();
+            } catch (audioError: any) {
+              console.error('[Upload voice] Audio stream start error:', audioError);
+              isRecordingRef.current = false;
+              setIsRecording(false);
+              setIsProcessing(false);
+              Alert.alert(
+                'Microphone unavailable',
+                audioError?.message || 'Could not start the microphone. Please allow microphone access and try again.',
+              );
+              try {
+                socket.close();
+              } catch {}
+            }
             return;
           }
 
