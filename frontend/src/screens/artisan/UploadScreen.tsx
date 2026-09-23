@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Platform,
 } from 'react-native';
 import {
   AudioModule,
@@ -166,6 +167,7 @@ export const UploadScreen: React.FC = () => {
   const isRecordingRef = useRef(false);
   const finalTranscriptRef = useRef('');
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webRecognitionRef = useRef<any>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [enhancedImageUri, setEnhancedImageUri] = useState('');
   const [enhancementProvider, setEnhancementProvider] = useState('');
@@ -173,8 +175,11 @@ export const UploadScreen: React.FC = () => {
 
   const [voiceNote, setVoiceNote] = useState('');
   const [extractionResult, setExtractionResult] = useState<any | null>(null);
+  const [descriptionChangedAfterExtraction, setDescriptionChangedAfterExtraction] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeakingDescription, setIsSpeakingDescription] = useState(false);
+  const [isSpeakingAiDraft, setIsSpeakingAiDraft] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const liveSpeechUrl = useMemo(() => {
     const explicit = process.env.EXPO_PUBLIC_LIVE_SPEECH_URL?.trim();
@@ -211,6 +216,10 @@ export const UploadScreen: React.FC = () => {
         socketRef.current?.close();
       } catch {}
       socketRef.current = null;
+      try {
+        webRecognitionRef.current?.stop?.();
+      } catch {}
+      webRecognitionRef.current = null;
       SpeechAdapter.stop().catch(() => {});
     };
   }, []);
@@ -222,6 +231,7 @@ export const UploadScreen: React.FC = () => {
     setEnhancedImageUri('');
     setEnhancementProvider('');
     setExtractionResult(null);
+    setDescriptionChangedAfterExtraction(false);
     setIsEnhancing(true);
 
     try {
@@ -266,41 +276,354 @@ export const UploadScreen: React.FC = () => {
     try {
       const result = await ApiAdapter.extractCraftInfo(voiceNote, lang);
       setExtractionResult(result);
+      setDescriptionChangedAfterExtraction(false);
       if (result?.followUpQuestion) {
         await SpeechAdapter.speak(result.followUpQuestion, lang as any);
       }
     } catch (err: any) {
       setExtractionResult({ error: err?.message || 'Could not analyze the description.' });
+      setDescriptionChangedAfterExtraction(false);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleUploadToMyProducts = async () => {
+    if (!selectedImage?.base64) {
+      Alert.alert('Photo required', 'Please select a craft photo before uploading.');
+      return;
+    }
+
+    if (!extractionResult || extractionResult.error) {
+      Alert.alert('AI craft draft required', 'Complete the AI craft draft first, then upload the craft.');
+      return;
+    }
+
+    const data = extractionResult.extractedData || {};
+
+    // Keep catalog text safely inside the backend validation limit.
+    // More importantly, never send NaN/Infinity as JSON numbers: JSON.stringify
+    // converts those values to null, which the backend correctly rejects.
+    const safeText = (value: unknown, max = 5000): string => {
+      const text = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+      return text.slice(0, max);
+    };
+
+    const finiteNumber = (value: unknown): number | undefined => {
+      return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    };
+
+    const enhancedForUpload =
+      typeof enhancedImageUri === 'string' && enhancedImageUri.startsWith('data:image/')
+        ? enhancedImageUri
+        : selectedImage.base64;
+
+    const productPayload = {
+      title: safeText(data.productName || 'Handmade Craft', 300),
+      shortDescription: safeText(voiceNote, 5000),
+      fullDescription: safeText(voiceNote, 5000),
+      category: safeText(data.category, 500),
+      material: safeText(data.material, 500),
+      craftTechnique: safeText(data.craftTechnique, 500),
+      dimensions: safeText(data.dimensions, 500),
+      weight: safeText(data.weight, 200),
+      timeToMake: safeText(data.timeToMake, 200),
+      region: safeText(data.region, 300),
+      originalImageUrl: selectedImage.base64,
+      enhancedImageUrl: enhancedForUpload,
+      suggestedPriceMin: finiteNumber(data.suggestedPriceMin),
+      suggestedPriceMax: finiteNumber(data.suggestedPriceMax),
+      recommendedPrice: finiteNumber(data.recommendedPrice),
+      finalPrice: finiteNumber(data.finalPrice),
+      stockQuantity: finiteNumber(data.stockQuantity) ?? 1,
+      customizationAvailable: Boolean(data.customizationAvailable),
+      translations: data.translations && typeof data.translations === 'object' ? data.translations : undefined,
+      artisanLanguage: lang,
+    };
+
+    console.log('[Upload] Product payload summary:', {
+      titleLength: productPayload.title.length,
+      shortDescriptionLength: productPayload.shortDescription.length,
+      fullDescriptionLength: productPayload.fullDescription.length,
+      category: productPayload.category,
+      material: productPayload.material,
+      craftTechnique: productPayload.craftTechnique,
+      originalImageLength: productPayload.originalImageUrl?.length || 0,
+      enhancedImageLength: productPayload.enhancedImageUrl?.length || 0,
+      suggestedPriceMin: productPayload.suggestedPriceMin,
+      suggestedPriceMax: productPayload.suggestedPriceMax,
+      recommendedPrice: productPayload.recommendedPrice,
+      finalPrice: productPayload.finalPrice,
+      stockQuantity: productPayload.stockQuantity,
+    });
+
+    setIsUploading(true);
+    try {
+      await ApiAdapter.createProduct(productPayload);
+
+      console.log('[Upload] Product saved successfully. Opening My Products...');
+
+      // UploadScreen is a Bottom Tab screen. Use jumpTo() so React Navigation
+      // switches the actual Artisan tab instead of trying to push a route.
+      const tabNavigation = navigation as any;
+
+      if (typeof tabNavigation.jumpTo === 'function') {
+        tabNavigation.jumpTo('Catalog');
+      } else {
+        // Fallback for a nested/stack navigation setup.
+        tabNavigation.navigate('Catalog');
+      }
+    } catch (err: any) {
+      console.error('[Upload] Product upload failed:', err);
+      Alert.alert(
+        'Upload failed',
+        err?.message || 'Could not save this craft to My Products. Please try again.',
+      );
+    } finally {
+      setIsUploading(false);
     }
   };
 
   const handleSpeakDescription = async () => {
     if (!voiceNote.trim()) return;
     setIsSpeakingDescription(true);
-    await SpeechAdapter.speak(voiceNote, lang as any, () => setIsSpeakingDescription(false));
+    try {
+      await SpeechAdapter.speak(
+        voiceNote,
+        lang as any,
+        () => setIsSpeakingDescription(false),
+      );
+    } catch (error: any) {
+      console.warn('[Upload] Description TTS failed:', error);
+      setIsSpeakingDescription(false);
+      Alert.alert(
+        'Voice playback failed',
+        error?.message || 'Could not read the description aloud.',
+      );
+    }
   };
 
-  const handleVoiceInput = async () => {
+  const handleSpeakAiDraft = async () => {
+    if (!extractionResult || extractionResult.error) return;
+
+    const data = extractionResult.extractedData || {};
+    const features = Array.isArray(data.features) ? data.features : [];
+
+    const draftText = [
+      data.productName ? `Craft name: ${data.productName}.` : '',
+      data.category ? `Category: ${data.category}.` : '',
+      data.material ? `Material: ${data.material}.` : '',
+      data.craftTechnique ? `Craft technique: ${data.craftTechnique}.` : '',
+      data.dimensions ? `Dimensions: ${data.dimensions}.` : '',
+      data.weight ? `Weight: ${data.weight}.` : '',
+      data.timeToMake ? `Time to make: ${data.timeToMake}.` : '',
+      data.region ? `Region: ${data.region}.` : '',
+      features.length ? `Features: ${features.join(', ')}.` : '',
+      data.suggestedPriceMin != null && data.suggestedPriceMax != null
+        ? `Suggested price range: ${data.suggestedPriceMin} to ${data.suggestedPriceMax}.`
+        : data.recommendedPrice != null
+          ? `Recommended price: ${data.recommendedPrice}.`
+          : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    if (!draftText.trim()) {
+      Alert.alert(
+        'Nothing to read',
+        'The AI craft draft does not contain any details to read aloud yet.',
+      );
+      return;
+    }
+
+    setIsSpeakingAiDraft(true);
+
+    try {
+      await SpeechAdapter.speak(
+        draftText,
+        lang as any,
+        () => setIsSpeakingAiDraft(false),
+      );
+    } catch (error: any) {
+      console.warn('[Upload] AI draft TTS failed:', error);
+      setIsSpeakingAiDraft(false);
+      Alert.alert(
+        'Voice playback failed',
+        error?.message || 'Could not read the AI craft draft aloud.',
+      );
+    }
+  };
+
+  const getWebSpeechLanguage = (language: string) => {
+    const map: Record<string, string> = {
+      en: 'en-IN',
+      te: 'te-IN',
+      hi: 'hi-IN',
+      ta: 'ta-IN',
+      kn: 'kn-IN',
+      mr: 'mr-IN',
+      bn: 'bn-IN',
+      ml: 'ml-IN',
+      gu: 'gu-IN',
+      pa: 'pa-IN',
+      or: 'or-IN',
+      as: 'as-IN',
+      ur: 'ur-IN',
+    };
+    return map[language] || 'en-IN';
+  };
+
+  const handleWebVoiceInput = () => {
+    const browserWindow = typeof window !== 'undefined' ? (window as any) : null;
+    const SpeechRecognitionCtor =
+      browserWindow?.SpeechRecognition || browserWindow?.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      Alert.alert(
+        'Voice input unavailable',
+        'Your browser does not support live speech recognition. Please use the latest Google Chrome or run the app on Android/iOS.',
+      );
+      return;
+    }
+
     if (isRecordingRef.current) {
-      // Stop capture first. Deepgram receives a Finalize message below.
       isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(true);
 
       try {
-        await audioStream.stream.stop();
+        webRecognitionRef.current?.stop?.();
+      } catch (error) {
+        console.warn('[Upload voice] Web speech stop failed:', error);
+      }
+
+      webRecognitionRef.current = null;
+      setIsProcessing(false);
+
+      const transcript = finalTranscriptRef.current.trim();
+      if (!transcript) {
+        Alert.alert('No speech detected', 'Please speak clearly for a few seconds and try again.');
+        return;
+      }
+
+      setVoiceNote(transcript);
+      return;
+    }
+
+    finalTranscriptRef.current = '';
+    setVoiceNote('');
+    setIsProcessing(true);
+
+    try {
+      const recognition = new SpeechRecognitionCtor();
+      webRecognitionRef.current = recognition;
+      recognition.lang = getWebSpeechLanguage(lang);
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        isRecordingRef.current = true;
+        setIsRecording(true);
+        setIsProcessing(false);
+        console.log('[Upload voice] Web speech recognition started:', recognition.lang);
+      };
+
+      recognition.onresult = (event: any) => {
+        let finalText = finalTranscriptRef.current;
+        let interimText = '';
+
+        for (let i = event.resultIndex || 0; i < event.results.length; i += 1) {
+          const result = event.results[i];
+          const text = String(result?.[0]?.transcript || '').trim();
+          if (!text) continue;
+
+          if (result.isFinal) {
+            finalText = `${finalText} ${text}`.trim();
+          } else {
+            interimText = `${interimText} ${text}`.trim();
+          }
+        }
+
+        finalTranscriptRef.current = finalText;
+        setVoiceNote(`${finalText} ${interimText}`.trim());
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('[Upload voice] Web speech error:', event?.error || event);
+        isRecordingRef.current = false;
+        setIsRecording(false);
+        setIsProcessing(false);
+        webRecognitionRef.current = null;
+
+        if (event?.error === 'not-allowed' || event?.error === 'service-not-allowed') {
+          Alert.alert(
+            'Microphone permission',
+            'Please allow microphone access for this website and try again.',
+          );
+        } else if (event?.error !== 'aborted') {
+          Alert.alert(
+            'Voice input failed',
+            event?.error || 'Browser speech recognition could not start.',
+          );
+        }
+      };
+
+      recognition.onend = () => {
+        webRecognitionRef.current = null;
+        setIsProcessing(false);
+
+        if (isRecordingRef.current) {
+          isRecordingRef.current = false;
+          setIsRecording(false);
+          const transcript = finalTranscriptRef.current.trim();
+          if (transcript) setVoiceNote(transcript);
+        }
+      };
+
+      recognition.start();
+    } catch (error: any) {
+      console.error('[Upload voice] Web speech start error:', error);
+      webRecognitionRef.current = null;
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      setIsProcessing(false);
+      Alert.alert(
+        'Voice input failed',
+        error?.message || 'Could not start browser speech recognition.',
+      );
+    }
+  };
+
+  const handleVoiceInput = async () => {
+    // Expo Web does not reliably provide audioStream.stream. On Web, use the
+    // browser's native SpeechRecognition API instead of sending raw audio.
+    if (Platform.OS === 'web') {
+      handleWebVoiceInput();
+      return;
+    }
+
+    if (isRecordingRef.current) {
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      setIsProcessing(true);
+
+      try {
+        const stream = audioStream?.stream;
+        if (stream) {
+          try {
+            await stream.stop();
+          } catch (audioError) {
+            console.warn('[Upload voice] Audio stream stop failed:', audioError);
+          }
+        }
 
         const socket = socketRef.current;
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: 'finalize' }));
-
-          // Give Deepgram a moment to return the final transcript.
           await new Promise<void>((resolve) => {
             stopTimerRef.current = setTimeout(resolve, 900);
           });
-
           try {
             socket.send(JSON.stringify({ type: 'close' }));
           } catch {}
@@ -308,23 +631,15 @@ export const UploadScreen: React.FC = () => {
         }
 
         socketRef.current = null;
-
         const transcript = finalTranscriptRef.current.trim();
         if (!transcript) {
-          Alert.alert(
-            'No speech detected',
-            'Please speak clearly for a few seconds and try again.',
-          );
+          Alert.alert('No speech detected', 'Please speak clearly for a few seconds and try again.');
           return;
         }
-
         setVoiceNote(transcript);
       } catch (err: any) {
         console.error('[Upload voice] stop error:', err);
-        Alert.alert(
-          'Voice input failed',
-          err?.message || 'Could not stop or transcribe your voice.',
-        );
+        Alert.alert('Voice input failed', err?.message || 'Could not stop or transcribe your voice.');
       } finally {
         if (stopTimerRef.current) {
           clearTimeout(stopTimerRef.current);
@@ -332,24 +647,17 @@ export const UploadScreen: React.FC = () => {
         }
         setIsProcessing(false);
       }
-
       return;
     }
 
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
-          'Microphone permission',
-          'Please allow microphone permission to use voice input.',
-        );
+        Alert.alert('Microphone permission', 'Please allow microphone permission to use voice input.');
         return;
       }
 
-      await setAudioModeAsync({
-        playsInSilentMode: true,
-        allowsRecording: true,
-      });
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
 
       finalTranscriptRef.current = '';
       setVoiceNote('');
@@ -360,14 +668,7 @@ export const UploadScreen: React.FC = () => {
 
       socket.onopen = async () => {
         try {
-          socket.send(
-            JSON.stringify({
-              type: 'config',
-              language: lang,
-              sampleRate: 16000,
-              channels: 1,
-            }),
-          );
+          socket.send(JSON.stringify({ type: 'config', language: lang, sampleRate: 16000, channels: 1 }));
         } catch (error: any) {
           console.error('[Upload voice] WebSocket config error:', error);
           setIsProcessing(false);
@@ -377,28 +678,46 @@ export const UploadScreen: React.FC = () => {
         }
       };
 
-      socket.onmessage = (event) => {
+      socket.onmessage = async (event) => {
         try {
           const message = JSON.parse(event.data);
 
           if (message.type === 'ready') {
-            isRecordingRef.current = true;
-            setIsRecording(true);
-            setIsProcessing(false);
-            audioStream.stream.start();
+            const stream = audioStream?.stream;
+            if (!stream) {
+              console.error('[Upload voice] Audio stream is unavailable.');
+              isRecordingRef.current = false;
+              setIsRecording(false);
+              setIsProcessing(false);
+              Alert.alert('Microphone unavailable', 'The microphone stream is not ready. Please check microphone permission and try again.');
+              try { socket.close(); } catch {}
+              return;
+            }
+
+            try {
+              await stream.start();
+              isRecordingRef.current = true;
+              setIsRecording(true);
+              setIsProcessing(false);
+            } catch (audioError: any) {
+              console.error('[Upload voice] Audio stream start error:', audioError);
+              isRecordingRef.current = false;
+              setIsRecording(false);
+              setIsProcessing(false);
+              Alert.alert('Microphone unavailable', audioError?.message || 'Could not start the microphone.');
+              try { socket.close(); } catch {}
+            }
             return;
           }
 
           if (message.type === 'transcript') {
             const transcript = String(message.transcript || '').trim();
             if (!transcript) return;
-
             if (message.isFinal) {
               finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim();
               setVoiceNote(finalTranscriptRef.current);
             } else {
-              const preview = `${finalTranscriptRef.current} ${transcript}`.trim();
-              setVoiceNote(preview);
+              setVoiceNote(`${finalTranscriptRef.current} ${transcript}`.trim());
             }
             return;
           }
@@ -408,13 +727,8 @@ export const UploadScreen: React.FC = () => {
             isRecordingRef.current = false;
             setIsRecording(false);
             setIsProcessing(false);
-            Alert.alert(
-              'Voice input failed',
-              message.error || 'Live transcription failed.',
-            );
-            try {
-              socket.close();
-            } catch {}
+            Alert.alert('Voice input failed', message.error || 'Live transcription failed.');
+            try { socket.close(); } catch {}
           }
         } catch (error) {
           console.warn('[Upload voice] Invalid WebSocket message:', error);
@@ -426,28 +740,21 @@ export const UploadScreen: React.FC = () => {
         isRecordingRef.current = false;
         setIsRecording(false);
         setIsProcessing(false);
-        Alert.alert(
-          'Voice input failed',
-          'Could not connect to the live speech service. Check that the backend is running and the phone is on the same Wi-Fi.',
-        );
+        Alert.alert('Voice input failed', 'Could not connect to the live speech service. Check that the backend is running and the phone is on the same Wi-Fi.');
       };
 
       socket.onclose = () => {
-        if (socketRef.current === socket) {
-          socketRef.current = null;
-        }
+        if (socketRef.current === socket) socketRef.current = null;
       };
     } catch (err: any) {
       console.error('[Upload voice] start error:', err);
       isRecordingRef.current = false;
       setIsRecording(false);
       setIsProcessing(false);
-      Alert.alert(
-        'Voice input failed',
-        err?.message || 'Could not start live voice input.',
-      );
+      Alert.alert('Voice input failed', err?.message || 'Could not start live voice input.');
     }
   };
+
   const currentIndex = useMemo(() => {
     if (!selectedImage) return 0;
     if (isEnhancing) return 1;
@@ -583,7 +890,12 @@ export const UploadScreen: React.FC = () => {
           <TextField
             label={t('yourDescription')}
             value={voiceNote}
-            onChangeText={setVoiceNote}
+            onChangeText={(text) => {
+              setVoiceNote(text);
+              if (extractionResult && text !== voiceNote) {
+                setDescriptionChangedAfterExtraction(true);
+              }
+            }}
             multiline
             numberOfLines={4}
             placeholder={t('descPlaceholder')}
@@ -648,7 +960,8 @@ export const UploadScreen: React.FC = () => {
             <View style={styles.aiHeaderCopy}>
               <Text style={styles.cardTitle}>Let AI organize your craft details</Text>
               <Text style={styles.cardText}>
-                It turns your spoken description into clear catalog attributes.
+                It turns your spoken description into catalog attributes. Once the draft is extracted,
+                you can upload it directly to My Products.
               </Text>
             </View>
           </View>
@@ -661,10 +974,105 @@ export const UploadScreen: React.FC = () => {
               style={styles.aiButton}
             />
           ) : (
-            <ExtractionResult
-              result={extractionResult}
-              onRetry={handleAnalyzeWithAi}
-            />
+            <>
+              <ExtractionResult
+                result={extractionResult}
+                onRetry={handleAnalyzeWithAi}
+              />
+
+              {!extractionResult.error ? (
+                <>
+                  {descriptionChangedAfterExtraction ? (
+                    <View style={styles.reExtractNotice}>
+                      <View style={styles.reExtractNoticeCopy}>
+                        <Ionicons name="create-outline" size={19} color={PALETTE.aiAccent} />
+                        <View style={styles.reExtractNoticeTextWrap}>
+                          <Text style={styles.reExtractNoticeTitle}>Description updated</Text>
+                          <Text style={styles.reExtractNoticeText}>
+                            The current AI draft was created from the old description. Re-extract it to update the craft details.
+                          </Text>
+                        </View>
+                      </View>
+                      <Pressable
+                        onPress={handleAnalyzeWithAi}
+                        disabled={!voiceNote.trim() || isProcessing}
+                        style={[styles.reExtractButton, isProcessing && styles.disabled]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Re-extract AI craft draft"
+                      >
+                        {isProcessing ? (
+                          <ActivityIndicator size="small" color={PALETTE.textInverse} />
+                        ) : (
+                          <Ionicons name="refresh" size={18} color={PALETTE.textInverse} />
+                        )}
+                        <Text style={styles.reExtractButtonText}>
+                          {isProcessing ? 'Re-extracting…' : 'Re-extract AI Craft Draft'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  <Pressable
+                    onPress={handleSpeakAiDraft}
+                    disabled={isSpeakingAiDraft}
+                    style={[
+                      styles.aiDraftListenButton,
+                      isSpeakingAiDraft && styles.disabled,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Listen to AI craft draft"
+                  >
+                    <Ionicons
+                      name={isSpeakingAiDraft ? 'volume-high' : 'volume-medium-outline'}
+                      size={21}
+                      color={PALETTE.primary}
+                    />
+                    <View style={styles.aiDraftListenCopy}>
+                      <Text style={styles.aiDraftListenTitle}>
+                        {isSpeakingAiDraft
+                          ? 'Reading AI craft draft…'
+                          : 'Listen to AI craft draft'}
+                      </Text>
+                      <Text style={styles.aiDraftListenSubtitle}>
+                        Tap to hear the craft details aloud in your selected language.
+                      </Text>
+                    </View>
+                  </Pressable>
+
+                  {descriptionChangedAfterExtraction ? (
+                    <View style={styles.reExtractNotice}>
+                      <View style={styles.reExtractNoticeCopy}>
+                        <Ionicons name="information-circle-outline" size={19} color={PALETTE.aiAccent} />
+                        <View style={styles.reExtractNoticeTextWrap}>
+                          <Text style={styles.reExtractNoticeTitle}>Description changed</Text>
+                          <Text style={styles.reExtractNoticeText}>
+                            You can upload the current AI draft now. Re-extract only if you want the
+                            latest description changes included in the draft.
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  ) : null}
+
+                  <Pressable
+                    onPress={handleUploadToMyProducts}
+                    disabled={isUploading}
+                    style={[styles.uploadProductButton, isUploading && styles.disabled]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Upload to My Products"
+                  >
+                    {isUploading ? (
+                      <ActivityIndicator color={PALETTE.textInverse} />
+                    ) : (
+                      <Ionicons name="cloud-upload-outline" size={21} color={PALETTE.textInverse} />
+                    )}
+                    <Text style={styles.uploadProductButtonText}>
+                      {isUploading ? 'Uploading…' : 'Upload to My Products'}
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </>
           )}
         </Card>
 
@@ -1000,6 +1408,97 @@ backText: {
   },
   aiButton: {
     marginTop: SPACING.lg,
+  },
+
+  reExtractNotice: {
+    marginTop: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: PALETTE.aiAccentMuted,
+    borderWidth: 1,
+    borderColor: PALETTE.aiAccent,
+  },
+  reExtractNoticeCopy: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  reExtractNoticeTextWrap: {
+    flex: 1,
+    marginLeft: SPACING.sm,
+  },
+  reExtractNoticeTitle: {
+    color: PALETTE.textPrimary,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  reExtractNoticeText: {
+    color: PALETTE.textMuted,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 3,
+  },
+  reExtractButton: {
+    minHeight: 46,
+    marginTop: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: PALETTE.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+  },
+  reExtractButtonText: {
+    color: PALETTE.textInverse,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  aiDraftListenButton: {
+    minHeight: 64,
+    marginTop: SPACING.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: PALETTE.primary,
+    backgroundColor: PALETTE.primaryMuted,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    gap: SPACING.sm,
+  },
+
+  aiDraftListenCopy: {
+    flex: 1,
+  },
+
+  aiDraftListenTitle: {
+    color: PALETTE.primary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  aiDraftListenSubtitle: {
+    color: PALETTE.textMuted,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+
+  uploadProductButton: {
+    minHeight: 52,
+    marginTop: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: PALETTE.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+  },
+
+  uploadProductButtonText: {
+    color: PALETTE.textInverse,
+    fontSize: 14,
+    fontWeight: '800',
   },
   result: {
     marginTop: SPACING.lg,

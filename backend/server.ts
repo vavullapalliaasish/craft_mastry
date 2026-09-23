@@ -500,6 +500,7 @@ function validateProductInput(req: express.Request, res: express.Response, next:
   const stringFields = PRODUCT_FIELDS.filter((field) => ![
     'suggestedPriceMin', 'suggestedPriceMax', 'recommendedPrice', 'finalPrice', 'stockQuantity',
     'customizationAvailable', 'translations',
+    'originalImageUrl', 'enhancedImageUrl',
   ].includes(field));
   if (stringFields.some((field) => body[field] !== undefined &&
       (typeof body[field] !== 'string' || body[field].length > MAX_STRING_LENGTH))) {
@@ -1538,26 +1539,120 @@ app.post(
      * exhausted. The product flow can continue instead of
      * returning HTTP 500.
      */
+    // Extract explicit measurements/time directly from the artisan's words.
+    // This is used both when Gemini is unavailable and when Gemini omits a
+    // value that was actually present in the transcript.
+    const extractExplicitCraftValues = (text: string) => {
+      const source = String(text || '').replace(/\s+/g, ' ').trim();
+
+      const weightMatch = source.match(
+        /(?:weighs?|weight\s*(?:is|:)?|weighing)\s*(?:about|around|approximately|approx\.?|nearly)?\s*(\d+(?:\.\d+)?)\s*(kg|kgs|kilograms?|g|grams?|grammes?)(?![a-z])/i,
+      );
+
+      const genericWeightMatch = source.match(
+        /(?:about|around|approximately|approx\.?|nearly)?\s*(\d+(?:\.\d+)?)\s*(kg|kgs|kilograms?|g|grams?|grammes?)\s*(?:in\s+weight|weight)?/i,
+      );
+
+      const timeMatch = source.match(
+        /(?:takes?|take|requires?|require|needs?|need)\s*(?:about|around|approximately|approx\.?|nearly)?\s*(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?)(?:\s+(?:to|for)\s+(?:make|craft|finish|complete|produce))?/i,
+      );
+
+      const genericTimeMatch = source.match(
+        /(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|weeks?)\s*(?:to\s+(?:make|craft|finish|complete|produce))/i,
+      );
+
+      const dimensionMatch = source.match(
+        /(?:approximately|approx\.?|about|around)?\s*(\d+(?:\.\d+)?)\s*(?:x|×)\s*(\d+(?:\.\d+)?)\s*(?:x|×)?\s*(\d+(?:\.\d+)?)?\s*(inches?|inch|cm|centimeters?|feet|ft|meters?|m)?/i,
+      );
+
+      const normalizedUnit = (value: string) => {
+        const unit = value.toLowerCase();
+        if (/^kg|kilogram/.test(unit)) return 'kg';
+        if (/^g|gram/.test(unit)) return 'grams';
+        if (/^min/.test(unit)) return 'minutes';
+        if (/^h|hr/.test(unit)) return 'hours';
+        if (/^d/.test(unit)) return 'days';
+        if (/^w/.test(unit)) return 'weeks';
+        return unit;
+      };
+
+      const weight = weightMatch
+        ? `${weightMatch[1]} ${normalizedUnit(weightMatch[2])}`
+        : genericWeightMatch
+          ? `${genericWeightMatch[1]} ${normalizedUnit(genericWeightMatch[2])}`
+          : '';
+
+      const time = timeMatch
+        ? `${timeMatch[1]} ${normalizedUnit(timeMatch[2])}`
+        : genericTimeMatch
+          ? `${genericTimeMatch[1]} ${normalizedUnit(genericTimeMatch[2])}`
+          : '';
+
+      const dimensions = dimensionMatch
+        ? `${dimensionMatch[1]} × ${dimensionMatch[2]}${dimensionMatch[3] ? ` × ${dimensionMatch[3]}` : ''}${dimensionMatch[4] ? ` ${dimensionMatch[4]}` : ''}`
+        : '';
+
+      return { weight, timeToMake: time, dimensions };
+    };
+
+    const mergeExplicitCraftValues = (result: any) => {
+      const explicit = extractExplicitCraftValues(transcript);
+      const existing = result?.extractedData || {};
+      const extractedData = {
+        ...existing,
+        ...(explicit.weight && (!existing.weight || /not\s+specified|unknown|unavailable/i.test(String(existing.weight)))
+          ? { weight: explicit.weight }
+          : {}),
+        ...(explicit.timeToMake && (!existing.timeToMake || /not\s+specified|unknown|unavailable/i.test(String(existing.timeToMake)))
+          ? { timeToMake: explicit.timeToMake }
+          : {}),
+        ...(explicit.dimensions && (!existing.dimensions || /not\s+specified|unknown|unavailable/i.test(String(existing.dimensions)))
+          ? { dimensions: explicit.dimensions }
+          : {}),
+      };
+
+      const missingFields = Array.isArray(result?.missingFields)
+        ? result.missingFields.filter((field: unknown) => {
+            const name = String(field).toLowerCase();
+            if (explicit.weight && name.includes('weight')) return false;
+            if (explicit.timeToMake && (name.includes('time') || name.includes('time-to-make'))) return false;
+            if (explicit.dimensions && (name.includes('dimension') || name.includes('size'))) return false;
+            return true;
+          })
+        : [];
+
+      const hasMaterial = Boolean(String(extractedData.material || '').trim()) &&
+        !/not\s+specified|unknown|unavailable/i.test(String(extractedData.material));
+      const hasDimensions = Boolean(String(extractedData.dimensions || '').trim()) &&
+        !/not\s+specified|unknown|unavailable/i.test(String(extractedData.dimensions));
+      const hasTechnique = Boolean(String(extractedData.craftTechnique || '').trim()) &&
+        !/not\s+specified|unknown|unavailable/i.test(String(extractedData.craftTechnique));
+
+      const isComplete = hasMaterial && (hasDimensions || hasTechnique);
+
+      return {
+        ...result,
+        isComplete,
+        missingFields,
+        followUpQuestion: isComplete ? '' : result?.followUpQuestion || '',
+        extractedData,
+      };
+    };
+
     const fallbackExtraction = () => {
       const lower = transcript.toLowerCase();
+      const explicit = extractExplicitCraftValues(transcript);
 
-      const isShort =
-        transcript.trim().split(/\s+/).length < 7;
+      const isShort = transcript.trim().split(/\s+/).length < 7;
 
       const hasMaterial =
-        /wood|silk|clay|cotton|brass|metal|leather|stone|pottery|చెక్క|పట్టు|మట్టి|ఇత్తడి|లోహం|తోలు|लकड़ी|रेशम|पीतल|मिट्टी/.test(
-          lower
-        );
+        /wood|wooden|neem wood|silk|clay|cotton|brass|metal|leather|stone|pottery|bamboo|glass|jute|wool|చెక్క|వేప చెక్క|పట్టు|మట్టి|ఇత్తడి|లోహం|తోలు|వెదురు|लकड़ी|रेशम|पीतल|मिट्टी|बांस/.test(lower);
 
-      const hasDimensions =
-        /inch|inches|cm|meter|meters|size|kg|gram|grams|feet|ft|అంగుళాలు|గ్రాములు|కిలో|పరిమాణం|इंच|ग्राम|किलो|आकार/.test(
-          lower
-        );
+      const hasDimensions = Boolean(explicit.dimensions) ||
+        /inch|inches|cm|meter|meters|size|feet|ft|అంగుళాలు|పరిమాణం|इंच|आकार/.test(lower);
 
       const hasTechnique =
-        /handmade|hand made|handcrafted|carved|carving|woven|weaving|loom|painted|painting|casting|pottery|handloom|చేతితో|చెక్కడం|నేత|చిత్రం|हस्तनिर्मित|बुनाई|चित्रकारी/.test(
-          lower
-        );
+        /handmade|hand made|handcrafted|carved|carving|hand-carved|woven|weaving|loom|painted|painting|casting|pottery|handloom|చేతితో|చెక్కడం|నేత|చిత్రం|हस्तनिर्मित|बुनाई|चित्रकारी/.test(lower);
 
       const isComplete =
         !isShort &&
@@ -1565,109 +1660,43 @@ app.post(
         (hasDimensions || hasTechnique);
 
       const missing: string[] = [];
-
-      if (!hasMaterial) {
-        missing.push('material');
-      }
-
-      if (!hasDimensions && !hasTechnique) {
-        missing.push('dimensions');
-      }
+      if (!hasMaterial) missing.push('material');
+      if (!hasDimensions && !hasTechnique) missing.push('dimensions');
 
       let followUp = '';
-
       if (!isComplete) {
         if (language === 'te') {
-          followUp =
-            'మీ వస్తువు వివరాలను విన్నాను. అయితే ఉపయోగించిన మెటీరియల్ మరియు సుమారు పరిమాణం లేదా తయారీ విధానం గురించి మరికొంత వివరించండి.';
+          followUp = 'మీ వస్తువు వివరాలను విన్నాను. ఉపయోగించిన మెటీరియల్ మరియు సుమారు పరిమాణం లేదా తయారీ విధానం గురించి మరికొంత వివరించండి.';
         } else if (language === 'hi') {
-          followUp =
-            'मैंने आपके उत्पाद का विवरण समझ लिया है। कृपया उपयोग की गई सामग्री और अनुमानित आकार या बनाने की विधि के बारे में थोड़ा और बताएं।';
+          followUp = 'मैंने आपके उत्पाद का विवरण समझ लिया है। कृपया उपयोग की गई सामग्री और अनुमानित आकार या बनाने की विधि के बारे में थोड़ा और बताएं।';
         } else {
-          followUp =
-            'I have noted your product details. Please specify the material used and approximate dimensions or the handmade technique.';
+          followUp = 'I have noted your product details. Please specify the material used and approximate dimensions or the handmade technique.';
         }
       }
 
       let category = 'Other';
-
-      if (
-        /wood|wooden|carved|చెక్క|लकड़ी/.test(lower)
-      ) {
-        category = 'Wooden Crafts';
-      } else if (
-        /silk|cotton|saree|textile|handloom|woven|పట్టు|పత్తి|చీర|నేత|रेशम|कपड़ा/.test(
-          lower
-        )
-      ) {
-        category = 'Handloom Textiles';
-      } else if (
-        /brass|metal|bell metal|ఇత్తడి|లోహం|पीतल|धातु/.test(
-          lower
-        )
-      ) {
-        category = 'Metal Crafts';
-      } else if (
-        /clay|pottery|ceramic|మట్టి|కుండ|मिट्टी|मिट्टी के बर्तन/.test(
-          lower
-        )
-      ) {
-        category = 'Pottery & Ceramics';
-      } else if (
-        /leather|తోలు|चमड़ा/.test(lower)
-      ) {
-        category = 'Leather Crafts';
-      } else if (
-        /jewel|necklace|earring|ring|నగ|ఆభరణ|गहना|हार/.test(
-          lower
-        )
-      ) {
-        category = 'Jewelry';
-      } else if (
-        /stone|రాయి|శిల్పం|पत्थर/.test(lower)
-      ) {
-        category = 'Stone Carving';
-      } else if (
-        /painting|painted|చిత్రం|चित्र|पेंटिंग/.test(
-          lower
-        )
-      ) {
-        category = 'Paintings';
-      }
+      if (/wood|wooden|carved|చెక్క|लकड़ी/.test(lower)) category = 'Wooden Crafts';
+      else if (/silk|cotton|saree|textile|handloom|woven|పట్టు|పత్తి|చీర|నేత|रेशम|कपड़ा/.test(lower)) category = 'Handloom Textiles';
+      else if (/brass|metal|bell metal|ఇత్తడి|లోహం|पीतल|धातु/.test(lower)) category = 'Metal Crafts';
+      else if (/clay|pottery|ceramic|మట్టి|కుండ|मिट्टी|मिट्टी के बर्तन/.test(lower)) category = 'Pottery & Ceramics';
+      else if (/leather|తోలు|चमड़ा/.test(lower)) category = 'Leather Crafts';
+      else if (/jewel|necklace|earring|ring|నగ|ఆభరణ|गहना|हार/.test(lower)) category = 'Jewelry';
+      else if (/stone|రాయి|శిల్పం|पत्थर/.test(lower)) category = 'Stone Carving';
+      else if (/painting|painted|చిత్రం|चित्र|पेंटिंग/.test(lower)) category = 'Paintings';
 
       return {
         isComplete,
         missingFields: missing,
         followUpQuestion: followUp,
         extractedData: {
-          productName:
-            transcript.trim().slice(0, 80),
-
+          productName: transcript.trim().slice(0, 80),
           category,
-
-          material:
-            hasMaterial
-              ? 'Authentic Natural Material'
-              : 'Handmade Material',
-
-          craftTechnique:
-            hasTechnique
-              ? 'Traditional Handcraft'
-              : 'Traditional Handcraft',
-
-          dimensions:
-            hasDimensions
-              ? 'As described by artisan'
-              : 'Approximate dimensions not provided',
-
-          weight: 'Not specified',
-
-          timeToMake: 'Not specified',
-
-          features: [
-            '100% Handmade',
-            'Artisanal Heritage',
-          ],
+          material: hasMaterial ? 'As described by artisan' : 'Not specified',
+          craftTechnique: hasTechnique ? 'Traditional Handcraft' : 'Not specified',
+          dimensions: explicit.dimensions || (hasDimensions ? 'As described by artisan' : 'Not specified'),
+          weight: explicit.weight || 'Not specified',
+          timeToMake: explicit.timeToMake || 'Not specified',
+          features: ['100% Handmade', 'Artisanal Heritage'],
         },
       };
     };
@@ -1705,6 +1734,12 @@ YOUR TASKS:
 - dimensions: Approximate size/height/width
 - weight: Approximate weight
 - timeToMake: Estimated time to craft one piece
+
+IMPORTANT EXTRACTION RULES:
+- If the artisan explicitly says a weight such as "250 grams", "0.5 kg", or "weighs around 250 grams", copy that value into weight exactly; do NOT return "Not specified".
+- If the artisan explicitly says a duration such as "takes 2 days", "requires 5 hours", or "2 days to make", copy that value into timeToMake exactly; do NOT return "Not specified".
+- If the artisan explicitly gives dimensions such as "8 inches long, 4 inches wide and 3 inches high", preserve those measurements in dimensions.
+- Never replace an explicitly provided numeric value with a generic phrase such as "lightweight", "handcrafted time", or "not specified".
 - features: Array of distinct handmade qualities
 
 2. INCOMPLETE INFORMATION CHECK:
@@ -1763,7 +1798,10 @@ Respond ONLY with valid JSON:
         const result =
           JSON.parse(text);
 
-        return res.json(result);
+        // Gemini can occasionally omit a value that is clearly present in
+        // the transcript. Merge explicit artisan-provided values before
+        // returning the result so real measurements are never lost.
+        return res.json(mergeExplicitCraftValues(result));
 
       } catch (error: any) {
 
@@ -2222,6 +2260,38 @@ app.post('/api/products', requireRole('ARTISAN', 'ADMIN'), validateBody([...PROD
     console.error('[Media] Product upload rejected:', err instanceof Error ? err.message : err);
     clientError(res, 400, 'Invalid product image');
   }
+});
+
+// Delete an artisan's own product and its stored image files.
+app.delete('/api/products/:id', requireRole('ARTISAN', 'ADMIN'), validateParam('id', /^[-A-Za-z0-9_]+$/), (req, res) => {
+  const auth = req.auth!;
+  const productId = req.params.id;
+  const index = productsDb.findIndex((product) => product.id === productId);
+
+  if (index < 0) {
+    return clientError(res, 404, 'Product not found');
+  }
+
+  const product = productsDb[index];
+  const ownsProduct =
+    auth.role === 'ADMIN' ||
+    product.artisanId === auth.uid ||
+    samePhone(product.artisanPhone, auth.phone);
+
+  if (!ownsProduct) {
+    return clientError(res, 403, 'You can only delete your own products');
+  }
+
+  const productFiles = filesDb.filter((file) => file.productId === productId);
+  for (const file of productFiles) {
+    removeStoredFile(file);
+  }
+  filesDb = filesDb.filter((file) => file.productId !== productId);
+
+  productsDb.splice(index, 1);
+  saveStoreToDisk();
+
+  return res.json({ success: true, productId });
 });
 
 // 9. Inquiries & 2-way Messages CRUD

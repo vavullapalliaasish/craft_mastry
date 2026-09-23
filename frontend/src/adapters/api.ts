@@ -612,6 +612,12 @@ export const ApiAdapter = {
     );
   },
 
+  async deleteProduct(productId: string): Promise<any> {
+    return request(`/products/${encodeURIComponent(productId)}`, {
+      method: 'DELETE',
+    });
+  },
+
   // ---------------------------------
   // Inquiries
   // ---------------------------------
