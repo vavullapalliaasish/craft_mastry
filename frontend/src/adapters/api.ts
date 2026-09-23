@@ -685,6 +685,32 @@ export const ApiAdapter = {
   },
 
   // ---------------------------------
+  // Orders
+  // ---------------------------------
+  // Orders are stored as inquiry/order requests in the current backend.
+  async getOrders(
+    forceRefresh =
+      false
+  ): Promise<any[]> {
+    return this.getInquiries(forceRefresh);
+  },
+
+  async updateOrderStatus(
+    orderId: string,
+    status: string
+  ): Promise<any> {
+    return request(
+      `/inquiries/${encodeURIComponent(orderId)}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status,
+        }),
+      }
+    );
+  },
+
+  // ---------------------------------
   // Users
   // ---------------------------------
 

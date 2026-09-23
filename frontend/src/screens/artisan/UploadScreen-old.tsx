@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import { BackHeader } from '../../components/ui/BackHeader';
 import {
   ActivityIndicator,
@@ -159,6 +160,7 @@ const ExtractionResult: React.FC<{
 };
 
 export const UploadScreen: React.FC = () => {
+  const navigation = useNavigation<any>();
   const { t, lang } = useLanguage();
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);

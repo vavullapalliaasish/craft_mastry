@@ -544,7 +544,7 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
   }
   if (process.env.NODE_ENV === 'production' && req.secure) {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -2384,6 +2384,47 @@ app.post(
     saveStoreToDisk();
 
     return res.status(201).json(serializeInquiry(inquiry, auth));
+  },
+);
+
+// Artisan/Admin updates an order status. Orders are represented by inquiries
+// in the current data model, so this updates the inquiry status in place.
+app.patch(
+  '/api/inquiries/:id/status',
+  validateParam('id', /^[-A-Za-z0-9_]+$/),
+  validateBody(['status'], ['status']),
+  (req, res) => {
+    const auth = req.auth!;
+    const inquiry = inquiriesDb.find((item) => item.id === req.params.id);
+
+    if (!inquiry) {
+      return clientError(res, 404, 'Order request not found');
+    }
+
+    const visible = visibleInquiriesFor(auth).some((item) => item.id === inquiry.id);
+    if (!visible) {
+      return clientError(res, 403, 'You do not have access to this order');
+    }
+
+    const allowedStatuses = [
+      'PENDING',
+      'ACCEPTED',
+      'REJECTED',
+      'SHIPPED',
+      'DELIVERED',
+    ];
+
+    const nextStatus = String(req.body.status || '').toUpperCase();
+
+    if (!allowedStatuses.includes(nextStatus)) {
+      return clientError(res, 400, 'Invalid order status');
+    }
+
+    inquiry.status = nextStatus;
+    inquiry.updatedAt = new Date().toISOString();
+    saveStoreToDisk();
+
+    return res.json(serializeInquiry(inquiry, auth));
   },
 );
 
