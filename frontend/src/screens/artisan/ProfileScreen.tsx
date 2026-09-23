@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import {
   Alert,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -745,70 +746,102 @@ export const ProfileScreen: React.FC<Props> = ({
      SIGN OUT
   =================================================== */
 
- const handleSignOut = () => {
-  Alert.alert(
-    'Sign Out',
-    'Are you sure you want to sign out?',
-    [
-      {
-        text: 'Cancel',
-        style: 'cancel',
-      },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: () => {
-          try {
-            console.log('[ProfileScreen] Sign out button pressed');
+  const performSignOut = () => {
 
-            // RootNavigator owns the authentication state.
-            // Do NOT call AuthAdapter.signOut() here.
-            if (onLogout) {
-              onLogout();
-              return;
-            }
+    try {
 
-            // Fallback only if ProfileScreen is used outside RootNavigator.
-            AuthAdapter.signOut()
-              .then(() => {
-                console.log(
-                  '[ProfileScreen] Local session cleared',
-                );
+      console.log(
+        '[ProfileScreen] Sign out button pressed',
+      );
 
-                if (
-                  typeof window !== 'undefined' &&
-                  typeof window.location?.reload === 'function'
-                ) {
-                  window.location.reload();
-                }
-              })
-              .catch((error) => {
-                console.error(
-                  '[ProfileScreen] Fallback sign out error:',
-                  error,
-                );
+      // RootNavigator owns the authentication state.
+      // Do NOT call AuthAdapter.signOut() here.
+      if (onLogout) {
+        onLogout();
+        return;
+      }
 
-                Alert.alert(
-                  'Sign Out Failed',
-                  'Unable to sign out. Please try again.',
-                );
-              });
-          } catch (error) {
-            console.error(
-              '[ProfileScreen] Sign out error:',
-              error,
-            );
+      // Fallback only if ProfileScreen is used outside RootNavigator.
+      AuthAdapter.signOut()
+        .then(() => {
 
-            Alert.alert(
-              'Sign Out Failed',
-              'Unable to sign out. Please try again.',
-            );
+          console.log(
+            '[ProfileScreen] Local session cleared',
+          );
+
+          if (
+            typeof window !== 'undefined' &&
+            typeof window.location?.reload === 'function'
+          ) {
+            window.location.reload();
           }
+        })
+        .catch((error) => {
+
+          console.error(
+            '[ProfileScreen] Fallback sign out error:',
+            error,
+          );
+
+          Alert.alert(
+            'Sign Out Failed',
+            'Unable to sign out. Please try again.',
+          );
+        });
+
+    } catch (error) {
+
+      console.error(
+        '[ProfileScreen] Sign out error:',
+        error,
+      );
+
+      Alert.alert(
+        'Sign Out Failed',
+        'Unable to sign out. Please try again.',
+      );
+    }
+  };
+
+  const handleSignOut = () => {
+
+    /*
+     * Alert.alert's button callbacks do not fire
+     * reliably on React Native Web. Use a native
+     * browser confirm() on web, and the real
+     * Alert.alert everywhere else (iOS/Android).
+     */
+
+    if (Platform.OS === 'web') {
+
+      if (
+        window.confirm(
+          'Are you sure you want to sign out?',
+        )
+      ) {
+        performSignOut();
+      }
+
+      return;
+    }
+
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
         },
-      },
-    ],
-  );
-};
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: performSignOut,
+        },
+      ],
+    );
+  };
+
   /* ===================================================
      UI
   =================================================== */
@@ -896,12 +929,6 @@ export const ProfileScreen: React.FC<Props> = ({
                 color="#33271F"
               />
 
-              <View
-                style={
-                  styles.notificationDot
-                }
-              />
-
             </TouchableOpacity>
 
             <View
@@ -935,9 +962,11 @@ export const ProfileScreen: React.FC<Props> = ({
         ================================================= */}
 
         <View
-          style={
-            styles.profileHero
-          }
+          style={[
+            styles.profileHero,
+            !isWideScreen &&
+              styles.profileHeroMobile,
+          ]}
         >
 
           <View
@@ -985,9 +1014,11 @@ export const ProfileScreen: React.FC<Props> = ({
           </View>
 
           <View
-            style={
-              styles.profileHeroInfo
-            }
+            style={[
+              styles.profileHeroInfo,
+              !isWideScreen &&
+                styles.profileHeroInfoMobile,
+            ]}
           >
 
             <Text
@@ -1080,43 +1111,45 @@ export const ProfileScreen: React.FC<Props> = ({
 
           </View>
 
-          <View
-            style={
-              styles.heroDecoration
-            }
-          >
-
+          {isWideScreen && (
             <View
               style={
-                styles.heroLeaves
+                styles.heroDecoration
               }
             >
 
-              <Ionicons
-                name="leaf-outline"
-                size={68}
-                color="#D7BE9F"
-              />
+              <View
+                style={
+                  styles.heroLeaves
+                }
+              >
 
-              <Ionicons
-                name="leaf"
-                size={38}
-                color="#B98555"
-              />
+                <Ionicons
+                  name="leaf-outline"
+                  size={68}
+                  color="#D7BE9F"
+                />
+
+                <Ionicons
+                  name="leaf"
+                  size={38}
+                  color="#B98555"
+                />
+
+              </View>
+
+              <Text
+                style={
+                  styles.creatorText
+                }
+              >
+                Proud to be
+                {'\n'}
+                a Creator ♥
+              </Text>
 
             </View>
-
-            <Text
-              style={
-                styles.creatorText
-              }
-            >
-              Proud to be
-              {'\n'}
-              a Creator ♥
-            </Text>
-
-          </View>
+          )}
 
         </View>
 
@@ -1281,6 +1314,146 @@ export const ProfileScreen: React.FC<Props> = ({
 
             </View>
 
+          {/* =================================================
+              RIGHT COLUMN
+          ================================================= */}
+
+          <View
+            style={[
+              styles.rightColumn,
+
+              !isWideScreen &&
+                styles.mobileColumn,
+            ]}
+          >
+
+            {/* =================================================
+                CRAFT JOURNEY
+            ================================================= */}
+
+            <View
+              style={
+                styles.sectionCard
+              }
+            >
+
+              <View
+                style={
+                  styles.titleWithIcon
+                }
+              >
+
+                <Ionicons
+                  name="trending-up-outline"
+                  size={22}
+                  color="#55351F"
+                />
+
+                <Text
+                  style={
+                    styles.sectionTitle
+                  }
+                >
+                  Craft Journey
+                </Text>
+
+              </View>
+
+              <View
+                style={
+                  styles.journeyRow
+                }
+              >
+
+                <JourneyStat
+                  icon="cube-outline"
+                  value="0"
+                  label="Products Listed"
+                  type="green"
+                />
+
+                <JourneyStat
+                  icon="cart-outline"
+                  value="0"
+                  label="Orders Received"
+                  type="orange"
+                />
+
+                <JourneyStat
+                  icon="star"
+                  value="—"
+                  label="Shop Rating"
+                  type="yellow"
+                />
+
+              </View>
+
+            </View>
+
+            {/* =================================================
+                QUICK SETTINGS
+            ================================================= */}
+
+            <View
+              style={
+                styles.sectionCard
+              }
+            >
+
+              <View
+                style={
+                  styles.titleWithIcon
+                }
+              >
+
+                <Ionicons
+                  name="settings-outline"
+                  size={22}
+                  color="#55351F"
+                />
+
+                <Text
+                  style={
+                    styles.sectionTitle
+                  }
+                >
+                  Quick Settings
+                </Text>
+
+              </View>
+
+              <SettingRow
+                icon="notifications-outline"
+                title="Notifications"
+                subtitle="Receive updates about orders and messages"
+                value={
+                  notifications
+                }
+                onChange={
+                  setNotifications
+                }
+              />
+
+              <SettingRow
+                icon="chatbubble-ellipses-outline"
+                title="Audio Assistance"
+                subtitle="Hear descriptions in your selected language"
+                value={
+                  audioAssistance
+                }
+                onChange={
+                  setAudioAssistance
+                }
+                last
+              />
+
+            </View>
+
+
+
+          </View>
+
+
             {/* =================================================
                 ACCOUNT ACTIONS
             ================================================= */}
@@ -1438,215 +1611,6 @@ export const ProfileScreen: React.FC<Props> = ({
                 </TouchableOpacity>
 
               </View>
-
-            </View>
-
-          </View>
-
-          {/* =================================================
-              RIGHT COLUMN
-          ================================================= */}
-
-          <View
-            style={[
-              styles.rightColumn,
-
-              !isWideScreen &&
-                styles.mobileColumn,
-            ]}
-          >
-
-            {/* =================================================
-                CRAFT JOURNEY
-            ================================================= */}
-
-            <View
-              style={
-                styles.sectionCard
-              }
-            >
-
-              <View
-                style={
-                  styles.titleWithIcon
-                }
-              >
-
-                <Ionicons
-                  name="trending-up-outline"
-                  size={22}
-                  color="#55351F"
-                />
-
-                <Text
-                  style={
-                    styles.sectionTitle
-                  }
-                >
-                  Craft Journey
-                </Text>
-
-              </View>
-
-              <View
-                style={
-                  styles.journeyRow
-                }
-              >
-
-                <JourneyStat
-                  icon="cube-outline"
-                  value="0"
-                  label="Products Listed"
-                  type="green"
-                />
-
-                <JourneyStat
-                  icon="cart-outline"
-                  value="0"
-                  label="Orders Received"
-                  type="orange"
-                />
-
-                <JourneyStat
-                  icon="star"
-                  value="—"
-                  label="Shop Rating"
-                  type="yellow"
-                />
-
-              </View>
-
-              <View
-                style={
-                  styles.quoteBox
-                }
-              >
-
-                <Text
-                  style={
-                    styles.quote
-                  }
-                >
-                  “Every craft tells a story,
-                  {'\n'}
-                  and you are the storyteller.”
-                </Text>
-
-                <Ionicons
-                  name="leaf-outline"
-                  size={48}
-                  color="#9AAA84"
-                />
-
-              </View>
-
-            </View>
-
-            {/* =================================================
-                QUICK SETTINGS
-            ================================================= */}
-
-            <View
-              style={
-                styles.sectionCard
-              }
-            >
-
-              <View
-                style={
-                  styles.titleWithIcon
-                }
-              >
-
-                <Ionicons
-                  name="settings-outline"
-                  size={22}
-                  color="#55351F"
-                />
-
-                <Text
-                  style={
-                    styles.sectionTitle
-                  }
-                >
-                  Quick Settings
-                </Text>
-
-              </View>
-
-              <SettingRow
-                icon="notifications-outline"
-                title="Notifications"
-                subtitle="Receive updates about orders and messages"
-                value={
-                  notifications
-                }
-                onChange={
-                  setNotifications
-                }
-              />
-
-              <SettingRow
-                icon="chatbubble-ellipses-outline"
-                title="Audio Assistance"
-                subtitle="Hear descriptions in your selected language"
-                value={
-                  audioAssistance
-                }
-                onChange={
-                  setAudioAssistance
-                }
-                last
-              />
-
-            </View>
-
-            {/* =================================================
-                KEEP CREATING
-            ================================================= */}
-
-            <View
-              style={
-                styles.keepCreating
-              }
-            >
-
-              <Ionicons
-                name="leaf"
-                size={42}
-                color="#76925F"
-              />
-
-              <View
-                style={
-                  styles.keepCopy
-                }
-              >
-
-                <Text
-                  style={
-                    styles.keepTitle
-                  }
-                >
-                  Keep Creating
-                </Text>
-
-                <Text
-                  style={
-                    styles.keepText
-                  }
-                >
-                  Your crafts make the world more beautiful!
-                </Text>
-
-              </View>
-
-              <Ionicons
-                name="sparkles-outline"
-                size={28}
-                color="#A96E3B"
-              />
 
             </View>
 
@@ -2545,6 +2509,7 @@ const styles =
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
+      flexShrink: 0,
     },
 
     notificationButton: {
@@ -2559,17 +2524,6 @@ const styles =
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
-    },
-
-    notificationDot: {
-      position: 'absolute',
-      right: 7,
-      top: 7,
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-      backgroundColor:
-        '#E25543',
     },
 
     headerAvatar: {
@@ -2604,10 +2558,27 @@ const styles =
       marginBottom: 15,
     },
 
+    /*
+     * MOBILE HERO
+     * The old layout kept avatar + text + decoration in one row.
+     * On a phone that leaves very little width for the name, causing
+     * "Aasish" to break vertically and overlap the decoration.
+     */
+    profileHeroMobile: {
+      minHeight: 0,
+      padding: 18,
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+    },
+
     avatarSection: {
       width: 125,
+      height: 125,
       alignItems: 'center',
       justifyContent: 'center',
+      position: 'relative',
+      flexShrink: 0,
     },
 
     largeAvatar: {
@@ -2629,7 +2600,7 @@ const styles =
     cameraButton: {
       position: 'absolute',
       right: 0,
-      bottom: 22,
+      bottom: 0,
       width: 38,
       height: 38,
       borderRadius: 19,
@@ -2642,8 +2613,17 @@ const styles =
 
     profileHeroInfo: {
       flex: 1,
+      minWidth: 0,
       justifyContent: 'center',
       paddingHorizontal: 15,
+    },
+
+    profileHeroInfoMobile: {
+      width: '100%',
+      flex: 0,
+      paddingHorizontal: 4,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
 
     profileName: {
@@ -2667,8 +2647,11 @@ const styles =
     profileMetaRow: {
       flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'center',
+      flexWrap: 'wrap',
       marginTop: 16,
       gap: 11,
+      width: '100%',
     },
 
     metaItem: {
@@ -2676,6 +2659,7 @@ const styles =
       alignItems: 'center',
       gap: 5,
       maxWidth: 260,
+      minWidth: 0,
     },
 
     metaText: {
@@ -2691,10 +2675,20 @@ const styles =
         '#D4C2B0',
     },
 
+    heroDecorationMobile: {
+      width: '100%',
+      minHeight: 82,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 8,
+    },
+
     heroDecoration: {
       width: 180,
       alignItems: 'center',
       justifyContent: 'center',
+      flexShrink: 0,
     },
 
     heroLeaves: {
@@ -2831,6 +2825,7 @@ const styles =
 
     infoCopy: {
       flex: 1,
+      minWidth: 0,
       marginLeft: 11,
       marginRight: 8,
     },
@@ -2954,25 +2949,6 @@ const styles =
       marginTop: 2,
     },
 
-    quoteBox: {
-      minHeight: 95,
-      borderRadius: 13,
-      backgroundColor:
-        '#FBF2E7',
-      marginTop: 10,
-      padding: 13,
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-
-    quote: {
-      flex: 1,
-      color: '#503523',
-      fontSize: 14,
-      lineHeight: 21,
-      fontStyle: 'italic',
-    },
-
     /* SETTINGS */
 
     settingRow: {
@@ -3011,35 +2987,6 @@ const styles =
 
     settingSubtitle: {
       color: '#8B827A',
-      fontSize: 9,
-      marginTop: 3,
-    },
-
-    /* KEEP CREATING */
-
-    keepCreating: {
-      minHeight: 92,
-      borderRadius: 16,
-      backgroundColor:
-        '#F7EAD8',
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: 15,
-    },
-
-    keepCopy: {
-      flex: 1,
-      marginHorizontal: 10,
-    },
-
-    keepTitle: {
-      color: '#643A20',
-      fontSize: 17,
-      fontWeight: '900',
-    },
-
-    keepText: {
-      color: '#796A5D',
       fontSize: 9,
       marginTop: 3,
     },

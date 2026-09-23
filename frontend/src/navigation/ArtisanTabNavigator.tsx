@@ -19,10 +19,7 @@ import { UploadScreen } from '../screens/artisan/UploadScreen';
 import { MessagesScreen } from '../screens/artisan/MessagesScreen';
 import { ProfileScreen } from '../screens/artisan/ProfileScreen';
 import { OrdersScreen } from '../screens/artisan/OrdersScreen';
- import{ PALETTE,
-  RADIUS,
-  TOUCH_TARGET,
-} from '../theme/tokens';
+import { RADIUS, TOUCH_TARGET } from '../theme/tokens';
 
 export type ArtisanTabParamList = {
   Dashboard: undefined;
@@ -229,7 +226,7 @@ const styles = StyleSheet.create({
   */
 
   tabBar: {
-    height: 70,
+    height: Platform.OS === 'ios' ? 78 : 70,
 
     backgroundColor: '#FFFFFF',
 
@@ -270,16 +267,18 @@ const styles = StyleSheet.create({
   },
 
   tabItem: {
-    minHeight:
-      TOUCH_TARGET.minHeight,
-
+    minHeight: TOUCH_TARGET.minHeight,
+    flex: 1,
+    minWidth: 0,
     paddingVertical: 0,
+    paddingHorizontal: 0,
   },
 
   tabLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
-    letterSpacing: 0.1,
+    letterSpacing: 0,
+    marginTop: -1,
   },
 
   iconWrap: {
